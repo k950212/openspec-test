@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterLink } from 'vue-router'
 
@@ -9,6 +9,10 @@ import { useUiStore } from '@/stores/ui'
 const cartStore = useCartStore()
 const uiStore = useUiStore()
 const { detailedItems, subtotal } = storeToRefs(cartStore)
+const isCartLoading = ref(true)
+const skeletonItems = [0, 1]
+
+let cartLoadTimer: number | undefined
 
 const shipping = computed(() => (detailedItems.value.length > 0 ? 12 : 0))
 const total = computed(() => subtotal.value + shipping.value)
@@ -18,6 +22,28 @@ const currencyFormatter = new Intl.NumberFormat('en-US', {
   currency: 'USD',
   maximumFractionDigits: 0,
 })
+
+onMounted(() => {
+  startCartLoading()
+})
+
+onBeforeUnmount(() => {
+  if (cartLoadTimer !== undefined) {
+    window.clearTimeout(cartLoadTimer)
+  }
+})
+
+function startCartLoading() {
+  isCartLoading.value = true
+
+  if (cartLoadTimer !== undefined) {
+    window.clearTimeout(cartLoadTimer)
+  }
+
+  cartLoadTimer = window.setTimeout(() => {
+    isCartLoading.value = false
+  }, 220)
+}
 
 function formatCurrency(value: number) {
   return currencyFormatter.format(value)
@@ -42,13 +68,43 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
     <section class="cart-panel">
       <div class="section-heading">
         <p class="eyebrow">購物車</p>
-        <h1>目前已選擇的商品</h1>
-        <p>你可以在這裡確認數量、比較規格選擇，準備好後再前往結帳。</p>
+        <h1>整理你目前已選擇的商品</h1>
+        <p>在這裡確認數量、規格與總計，準備好後就可以前往結帳。</p>
       </div>
 
-      <div v-if="detailedItems.length === 0" class="empty-state">
-        <h2>購物車目前是空的</h2>
-        <p>回到商店首頁逛逛，將適合你的商品加入購物車吧。</p>
+      <template v-if="isCartLoading">
+        <div class="cart-layout">
+          <section class="cart-list">
+            <article v-for="item in skeletonItems" :key="item" class="cart-item skeleton-card">
+              <div class="skeleton-media"></div>
+              <div class="item-copy">
+                <div class="skeleton-line skeleton-line-short"></div>
+                <div class="skeleton-line skeleton-line-title"></div>
+                <div class="skeleton-line"></div>
+                <div class="skeleton-line skeleton-line-medium"></div>
+              </div>
+              <div class="item-controls">
+                <div class="skeleton-pill"></div>
+                <div class="skeleton-line skeleton-line-medium"></div>
+                <div class="skeleton-line skeleton-line-short"></div>
+              </div>
+            </article>
+          </section>
+
+          <aside class="summary-card skeleton-summary">
+            <div class="skeleton-line skeleton-line-title"></div>
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line"></div>
+            <div class="skeleton-line skeleton-line-medium"></div>
+            <div class="skeleton-button"></div>
+            <div class="skeleton-button skeleton-button-secondary"></div>
+          </aside>
+        </div>
+      </template>
+
+      <div v-else-if="detailedItems.length === 0" class="empty-state">
+        <h2>購物車目前沒有商品</h2>
+        <p>先回到商店首頁逛逛，把喜歡的商品加入購物車後再回來確認。</p>
         <RouterLink to="/" class="link-button">返回商店首頁</RouterLink>
       </div>
 
@@ -334,6 +390,76 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
 .secondary-link {
   background: var(--color-background-mute);
   color: var(--color-heading);
+}
+
+.skeleton-card,
+.skeleton-summary {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.skeleton-media,
+.skeleton-line,
+.skeleton-pill,
+.skeleton-button {
+  background: linear-gradient(
+    90deg,
+    rgba(226, 232, 240, 0.85) 25%,
+    rgba(241, 245, 249, 1) 50%,
+    rgba(226, 232, 240, 0.85) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+
+.skeleton-media {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 18px;
+}
+
+.skeleton-line {
+  height: 0.85rem;
+  border-radius: 999px;
+}
+
+.skeleton-line-short {
+  width: 32%;
+}
+
+.skeleton-line-title {
+  width: 72%;
+  height: 1.2rem;
+}
+
+.skeleton-line-medium {
+  width: 58%;
+}
+
+.skeleton-pill {
+  width: 7rem;
+  height: 2.5rem;
+  border-radius: 999px;
+}
+
+.skeleton-button {
+  width: 100%;
+  height: 3rem;
+  border-radius: 999px;
+  margin-top: 1rem;
+}
+
+.skeleton-button-secondary {
+  opacity: 0.7;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
 }
 
 @media (max-width: 900px) {

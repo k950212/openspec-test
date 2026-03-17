@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterLink, useRouter } from 'vue-router'
 
@@ -13,6 +13,7 @@ type SortOption = 'default' | 'price-asc' | 'price-desc'
 
 const PAGE_SIZE_OPTIONS = ['6', '12', '18']
 const ALL_CATEGORY = '全部分類'
+const SKELETON_PRODUCT_COUNT = 6
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -26,8 +27,12 @@ const selectedCategory = ref(ALL_CATEGORY)
 const selectedSort = ref<SortOption>('default')
 const currentPage = ref(1)
 const pageSize = ref(6)
+const isCatalogLoading = ref(true)
+
+let catalogLoadTimer: number | undefined
 
 const featuredProducts = computed(() => products.slice(0, 3))
+const skeletonItems = computed(() => Array.from({ length: SKELETON_PRODUCT_COUNT }, (_, index) => index))
 
 const categoryOptions = computed(() =>
   [ALL_CATEGORY, ...new Set(products.map((product) => product.category))].map((category) => ({
@@ -110,6 +115,28 @@ const currencyFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 })
 
+onMounted(() => {
+  startCatalogLoading()
+})
+
+onBeforeUnmount(() => {
+  if (catalogLoadTimer !== undefined) {
+    window.clearTimeout(catalogLoadTimer)
+  }
+})
+
+function startCatalogLoading() {
+  isCatalogLoading.value = true
+
+  if (catalogLoadTimer !== undefined) {
+    window.clearTimeout(catalogLoadTimer)
+  }
+
+  catalogLoadTimer = window.setTimeout(() => {
+    isCatalogLoading.value = false
+  }, 260)
+}
+
 function formatCurrency(value: number) {
   return currencyFormatter.format(value)
 }
@@ -169,14 +196,14 @@ function handlePageChange(page: number, nextPageSize: number) {
   <main class="storefront-page">
     <section class="hero-card">
       <div class="hero-copy">
-        <p class="eyebrow">Studio Selection</p>
-        <h1>精心挑選的物品，讓日常生活變得更慢、更美好。</h1>
+        <p class="eyebrow">精選選物</p>
+        <h1>為日常節奏挑選更耐看、更好用的物件。</h1>
         <p class="description">
-          瀏覽我們精心挑選的靈活家具、日常必需品和觸感舒適的配件，打造緊湊型現代生活空間。
+          從家具、咖啡器具到旅行與桌面用品，為你整理出適合居家與工作場景的生活選物。
         </p>
 
         <div class="hero-actions">
-          <a href="#catalog" class="primary-button">瀏覽商品</a>
+          <a href="#catalog" class="primary-button">開始瀏覽</a>
           <div class="cart-pill">購物車：{{ itemCount }} 件商品</div>
         </div>
       </div>
@@ -199,7 +226,7 @@ function handlePageChange(page: number, nextPageSize: number) {
     <section id="catalog" class="catalog-section">
       <div class="section-heading">
         <p class="eyebrow">商品列表</p>
-        <h2>可依關鍵字、分類與價格快速篩選商品。</h2>
+        <h2>依關鍵字、分類與價格快速縮小你想看的商品範圍。</h2>
       </div>
 
       <div class="catalog-toolbar">
@@ -208,7 +235,7 @@ function handlePageChange(page: number, nextPageSize: number) {
           <a-input
             v-model:value="searchQuery"
             type="search"
-            placeholder="依商品名稱、分類或描述搜尋"
+            placeholder="輸入商品名稱、分類或描述"
             size="large"
           />
         </label>
@@ -231,13 +258,39 @@ function handlePageChange(page: number, nextPageSize: number) {
       </div>
 
       <div v-if="!hasCatalogProducts" class="empty-state">
-        <h3>目前沒有商品</h3>
-        <p>請先在本地商品資料中加入商品，才能顯示商店首頁。</p>
+        <h3>目前沒有可顯示的商品</h3>
+        <p>商品資料尚未建立完成，請稍後再回來，或先到其他頁面繼續瀏覽。</p>
       </div>
+
+      <template v-else-if="isCatalogLoading">
+        <div class="catalog-status loading-status">
+          <p>正在準備商品列表...</p>
+          <p>請稍候，內容即將顯示。</p>
+        </div>
+
+        <div class="product-grid skeleton-grid" aria-hidden="true">
+          <article v-for="item in skeletonItems" :key="item" class="product-card skeleton-card">
+            <div class="skeleton-media"></div>
+            <div class="product-copy">
+              <div class="skeleton-line skeleton-line-short"></div>
+              <div class="skeleton-line skeleton-line-title"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line skeleton-line-medium"></div>
+            </div>
+            <div class="product-actions">
+              <div class="skeleton-pill"></div>
+              <div class="skeleton-icon-group">
+                <div class="skeleton-icon"></div>
+                <div class="skeleton-icon"></div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </template>
 
       <div v-else-if="filteredProducts.length === 0" class="empty-state">
         <h3>找不到符合條件的商品</h3>
-        <p>可以放寬搜尋條件，或重設目前篩選後再次瀏覽完整商品列表。</p>
+        <p>你可以調整搜尋關鍵字、切換分類，或清除目前篩選後重新瀏覽完整商品列表。</p>
         <button type="button" class="primary-button empty-action" @click="clearFilters">
           重設篩選
         </button>
@@ -263,9 +316,7 @@ function handlePageChange(page: number, nextPageSize: number) {
                 <h3>{{ product.name }}</h3>
               </RouterLink>
               <p>{{ product.description }}</p>
-              <span v-if="hasProductVariants(product)" class="variant-badge"
-                >請至商品頁選擇規格</span
-              >
+              <span v-if="hasProductVariants(product)" class="variant-badge">請先到商品頁選擇規格</span>
             </div>
             <div class="product-actions">
               <RouterLink :to="`/products/${product.id}`" class="detail-link">查看商品</RouterLink>
@@ -275,9 +326,7 @@ function handlePageChange(page: number, nextPageSize: number) {
                   type="button"
                   class="wishlist-icon-button"
                   :class="{ active: isFavorited(product.id) }"
-                  :aria-label="
-                    isFavorited(product.id) ? `將 ${product.name} 移出收藏` : `收藏 ${product.name}`
-                  "
+                  :aria-label="isFavorited(product.id) ? `將 ${product.name} 移出收藏` : `收藏 ${product.name}`"
                   @click="toggleFavorite(product.id)"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -295,11 +344,7 @@ function handlePageChange(page: number, nextPageSize: number) {
                 <button
                   type="button"
                   class="cart-icon-button"
-                  :aria-label="
-                    hasProductVariants(product)
-                      ? `為 ${product.name} 選擇規格`
-                      : `將 ${product.name} 加入購物車`
-                  "
+                  :aria-label="hasProductVariants(product) ? `為 ${product.name} 選擇規格` : `將 ${product.name} 加入購物車`"
                   @click="addToCart(product.id, product.name)"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -354,17 +399,12 @@ function handlePageChange(page: number, nextPageSize: number) {
   border-radius: 32px;
   background:
     radial-gradient(circle at top left, rgba(255, 255, 255, 0.7), transparent 36%),
-    linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(214, 158, 46, 0.1)), var(--color-surface);
+    linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(214, 158, 46, 0.1)),
+    var(--color-surface);
   box-shadow: var(--shadow-card);
 }
 
-.hero-copy h1 {
-  margin-top: 0.45rem;
-  font-size: 3rem;
-  line-height: 0.98;
-  font-weight: 800;
-  color: var(--color-heading);
-}
+.hero-copy h1,
 .section-heading h2 {
   margin-top: 0.45rem;
   font-size: clamp(2.4rem, 6vw, 4.75rem);
@@ -545,9 +585,14 @@ function handlePageChange(page: number, nextPageSize: number) {
   font-weight: 600;
 }
 
-.catalog-status p:last-child {
+.catalog-status p:last-child,
+.loading-status p:last-child {
   color: var(--color-text-soft);
   font-weight: 500;
+}
+
+.loading-status {
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .empty-state {
@@ -681,6 +726,64 @@ function handlePageChange(page: number, nextPageSize: number) {
   height: 1.2rem;
 }
 
+.skeleton-grid .product-card {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.skeleton-media,
+.skeleton-line,
+.skeleton-pill,
+.skeleton-icon {
+  background: linear-gradient(
+    90deg,
+    rgba(226, 232, 240, 0.85) 25%,
+    rgba(241, 245, 249, 1) 50%,
+    rgba(226, 232, 240, 0.85) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+
+.skeleton-media {
+  width: 100%;
+  aspect-ratio: 1.1;
+}
+
+.skeleton-line {
+  height: 0.85rem;
+  border-radius: 999px;
+}
+
+.skeleton-line-short {
+  width: 30%;
+}
+
+.skeleton-line-title {
+  width: 72%;
+  height: 1.2rem;
+}
+
+.skeleton-line-medium {
+  width: 60%;
+}
+
+.skeleton-pill {
+  width: 6rem;
+  height: 2.5rem;
+  border-radius: 999px;
+}
+
+.skeleton-icon-group {
+  display: flex;
+  gap: 0.65rem;
+}
+
+.skeleton-icon {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+}
+
 .pagination-bar {
   display: flex;
   justify-content: center;
@@ -737,6 +840,16 @@ function handlePageChange(page: number, nextPageSize: number) {
 
 :deep(.ant-pagination a:hover) {
   background-color: transparent !important;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
 }
 
 @media (max-width: 1100px) {

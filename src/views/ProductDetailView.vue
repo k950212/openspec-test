@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import {
@@ -37,6 +37,8 @@ const reviewForm = reactive({
 })
 
 const variantSelection = reactive<ProductVariantSelection>({})
+const isDetailLoading = reactive({ value: true })
+let detailLoadTimer: number | undefined
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -44,7 +46,7 @@ const currencyFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 })
 
-const dateFormatter = new Intl.DateTimeFormat('en-US', {
+const dateFormatter = new Intl.DateTimeFormat('zh-TW', {
   year: 'numeric',
   month: 'long',
   day: 'numeric',
@@ -69,9 +71,8 @@ const existingUserReview = computed(() => {
 
   const authorEmail = profileStore.profile.email.trim().toLowerCase()
   return (
-    productReviews.value.find(
-      (review) => review.authorEmail.trim().toLowerCase() === authorEmail,
-    ) ?? null
+    productReviews.value.find((review) => review.authorEmail.trim().toLowerCase() === authorEmail) ??
+    null
   )
 })
 
@@ -80,8 +81,7 @@ const selectionState = computed(() => {
     return {
       isComplete: true,
       isValid: true,
-      message: 'This product is ready to add to cart.',
-
+      message: '此商品可直接加入購物車。',
       summary: [] as string[],
     }
   }
@@ -111,7 +111,7 @@ const selectionState = computed(() => {
   return {
     isComplete: true,
     isValid: true,
-    message: '目前選擇的規格可加入購物車。',
+    message: '目前規格可加入購物車。',
     summary: getProductVariantSelectionSummary(product.value, variantSelection),
   }
 })
@@ -139,6 +139,14 @@ const isReviewFormValid = computed(() => {
 })
 
 watch(
+  productId,
+  () => {
+    startDetailLoading()
+  },
+  { immediate: true },
+)
+
+watch(
   product,
   (nextProduct) => {
     Object.keys(variantSelection).forEach((key) => {
@@ -153,6 +161,24 @@ watch(
   },
   { immediate: true },
 )
+
+onBeforeUnmount(() => {
+  if (detailLoadTimer !== undefined) {
+    window.clearTimeout(detailLoadTimer)
+  }
+})
+
+function startDetailLoading() {
+  isDetailLoading.value = true
+
+  if (detailLoadTimer !== undefined) {
+    window.clearTimeout(detailLoadTimer)
+  }
+
+  detailLoadTimer = window.setTimeout(() => {
+    isDetailLoading.value = false
+  }, 260)
+}
 
 function formatCurrency(value: number) {
   return currencyFormatter.format(value)
@@ -247,7 +273,30 @@ function submitReview() {
 
 <template>
   <main class="product-detail-page">
-    <section v-if="product" class="detail-shell">
+    <template v-if="isDetailLoading.value">
+      <section class="detail-shell skeleton-detail-shell" aria-hidden="true">
+        <div class="skeleton-detail-media"></div>
+        <div class="detail-copy">
+          <div class="skeleton-line skeleton-line-short"></div>
+          <div class="skeleton-line skeleton-line-medium"></div>
+          <div class="skeleton-line skeleton-line-title"></div>
+          <div class="skeleton-line"></div>
+          <div class="skeleton-line"></div>
+          <div class="skeleton-pill-row">
+            <div class="skeleton-pill"></div>
+            <div class="skeleton-pill"></div>
+            <div class="skeleton-pill"></div>
+          </div>
+          <div class="skeleton-action-row">
+            <div class="skeleton-button"></div>
+            <div class="skeleton-icon"></div>
+            <div class="skeleton-icon"></div>
+          </div>
+        </div>
+      </section>
+    </template>
+
+    <section v-else-if="product" class="detail-shell">
       <div class="detail-media">
         <img :src="product.image" :alt="product.name" />
       </div>
@@ -319,9 +368,7 @@ function submitReview() {
               type="button"
               class="icon-button wishlist-button"
               :class="{ active: isFavorited(product.id) }"
-              :aria-label="
-                isFavorited(product.id) ? `將 ${product.name} 移出收藏` : `收藏 ${product.name}`
-              "
+              :aria-label="isFavorited(product.id) ? `將 ${product.name} 移出收藏` : `收藏 ${product.name}`"
               @click="toggleFavorite(product.id)"
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -340,7 +387,7 @@ function submitReview() {
       </div>
     </section>
 
-    <section v-if="product && relatedProducts.length > 0" class="related-products-shell">
+    <section v-if="!isDetailLoading.value && product" class="related-products-shell">
       <div class="related-products-header">
         <div>
           <p class="eyebrow">Related Products</p>
@@ -349,7 +396,7 @@ function submitReview() {
         </div>
       </div>
 
-      <div class="related-products-grid">
+      <div v-if="relatedProducts.length > 0" class="related-products-grid">
         <article
           v-for="relatedProduct in relatedProducts"
           :key="relatedProduct.id"
@@ -374,9 +421,15 @@ function submitReview() {
           </div>
         </article>
       </div>
+
+      <div v-else class="section-empty-state">
+        <h3>目前沒有相關商品</h3>
+        <p>這個分類中的可推薦商品暫時不足，你可以回到首頁繼續探索其他商品。</p>
+        <RouterLink to="/" class="secondary-action">回到商店首頁</RouterLink>
+      </div>
     </section>
 
-    <section v-if="product" class="reviews-shell">
+    <section v-if="!isDetailLoading.value && product" class="reviews-shell">
       <div class="reviews-header">
         <div>
           <p class="eyebrow">評論</p>
@@ -416,7 +469,7 @@ function submitReview() {
 
           <template v-else>
             <p class="section-label">登入後可評論</p>
-            <p class="signin-copy">你仍然可以先閱讀下方所有評論，想分享心得時再登入即可。</p>
+            <p class="signin-copy">你仍然可以閱讀下方評論，想分享心得時再登入即可。</p>
             <RouterLink to="/login" class="secondary-action sign-in-link">前往登入</RouterLink>
           </template>
         </section>
@@ -446,7 +499,7 @@ function submitReview() {
       </div>
     </section>
 
-    <section v-else class="not-found-card">
+    <section v-else-if="!isDetailLoading.value" class="not-found-card">
       <p class="eyebrow">找不到商品</p>
       <h1>目前找不到這項商品。</h1>
       <p>這個連結可能已失效，或商品已從目前的商店清單中移除。</p>
@@ -525,7 +578,8 @@ function submitReview() {
 .detail-copy h1,
 .not-found-card h1,
 .reviews-header h2,
-.variant-header h2 {
+.variant-header h2,
+.related-products-header h2 {
   color: var(--color-heading);
 }
 
@@ -537,7 +591,8 @@ function submitReview() {
 }
 
 .reviews-header h2,
-.variant-header h2 {
+.variant-header h2,
+.related-products-header h2 {
   margin-top: 0.35rem;
   font-size: clamp(1.5rem, 4vw, 2.2rem);
   font-weight: 800;
@@ -556,7 +611,8 @@ function submitReview() {
 .review-empty-state p,
 .review-content,
 .review-meta p,
-.selection-message {
+.selection-message,
+.section-empty-state p {
   color: var(--color-text-soft);
   font-size: 1rem;
 }
@@ -738,13 +794,6 @@ function submitReview() {
   padding: 1.5rem;
 }
 
-.related-products-header h2 {
-  margin-top: 0.35rem;
-  color: var(--color-heading);
-  font-size: clamp(1.6rem, 4vw, 2.3rem);
-  font-weight: 800;
-}
-
 .related-products-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -890,16 +939,25 @@ function submitReview() {
   font-size: 0.95rem;
 }
 
-.review-empty-state {
-  margin-top: 1rem;
+.review-empty-state,
+.section-empty-state {
+  display: grid;
+  gap: 0.75rem;
+  justify-items: start;
+  padding: 1.5rem;
+  border: 1px dashed rgba(15, 118, 110, 0.18);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.7);
 }
 
 .review-empty-state h3,
-.review-meta strong {
+.review-meta strong,
+.section-empty-state h3 {
   color: var(--color-heading);
 }
 
-.review-empty-state h3 {
+.review-empty-state h3,
+.section-empty-state h3 {
   font-size: 1.35rem;
   font-weight: 800;
 }
@@ -930,6 +988,84 @@ function submitReview() {
   padding: 2rem;
 }
 
+.skeleton-detail-shell {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.skeleton-detail-media,
+.skeleton-line,
+.skeleton-pill,
+.skeleton-button,
+.skeleton-icon {
+  background: linear-gradient(
+    90deg,
+    rgba(226, 232, 240, 0.85) 25%,
+    rgba(241, 245, 249, 1) 50%,
+    rgba(226, 232, 240, 0.85) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.3s linear infinite;
+}
+
+.skeleton-detail-media {
+  min-height: 24rem;
+  border-radius: 22px;
+}
+
+.skeleton-line {
+  height: 0.9rem;
+  border-radius: 999px;
+}
+
+.skeleton-line-short {
+  width: 26%;
+}
+
+.skeleton-line-medium {
+  width: 56%;
+}
+
+.skeleton-line-title {
+  width: 72%;
+  height: 1.4rem;
+}
+
+.skeleton-pill-row,
+.skeleton-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+}
+
+.skeleton-pill {
+  width: 6.5rem;
+  height: 2.6rem;
+  border-radius: 999px;
+}
+
+.skeleton-button {
+  width: 11rem;
+  height: 3rem;
+  border-radius: 999px;
+}
+
+.skeleton-icon {
+  width: 3.2rem;
+  height: 3.2rem;
+  border-radius: 999px;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -200% 0;
+  }
+}
+
 @media (max-width: 960px) {
   .detail-shell,
   .related-products-grid,
@@ -937,7 +1073,8 @@ function submitReview() {
     grid-template-columns: 1fr;
   }
 
-  .detail-media img {
+  .detail-media img,
+  .skeleton-detail-media {
     min-height: 18rem;
   }
 
@@ -945,7 +1082,8 @@ function submitReview() {
   .reviews-header,
   .review-meta,
   .variant-header,
-  .group-heading {
+  .group-heading,
+  .related-product-footer {
     align-items: stretch;
     flex-direction: column;
   }
