@@ -8,20 +8,35 @@ import { useUiStore } from '@/stores/ui'
 
 const cartStore = useCartStore()
 const uiStore = useUiStore()
-const { detailedItems, subtotal } = storeToRefs(cartStore)
+const {
+  detailedItems,
+  subtotal,
+  shipping,
+  shippingBase,
+  couponInput,
+  appliedCoupon,
+  couponDiscount,
+  couponFeedback,
+  total,
+  hasActiveCoupon,
+} = storeToRefs(cartStore)
+
 const isCartLoading = ref(true)
 const skeletonItems = [0, 1]
 
 let cartLoadTimer: number | undefined
-
-const shipping = computed(() => (detailedItems.value.length > 0 ? 12 : 0))
-const total = computed(() => subtotal.value + shipping.value)
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
   maximumFractionDigits: 0,
 })
+
+const couponFeedbackClass = computed(() => ({
+  success: couponFeedback.value.type === 'success',
+  error: couponFeedback.value.type === 'error',
+  info: couponFeedback.value.type === 'info',
+}))
 
 onMounted(() => {
   startCartLoading()
@@ -61,6 +76,18 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
     uiStore.showRemovalToast(`${productName} 已從購物車移除。`)
   }
 }
+
+function applyCoupon() {
+  const applied = cartStore.applyCoupon()
+
+  if (applied && appliedCoupon.value) {
+    uiStore.showSuccessToast(`已套用 ${appliedCoupon.value.code}。`, '優惠已啟用')
+  }
+}
+
+function removeCoupon() {
+  cartStore.removeCoupon()
+}
 </script>
 
 <template>
@@ -69,7 +96,7 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
       <div class="section-heading">
         <p class="eyebrow">購物車</p>
         <h1>整理你目前已選擇的商品</h1>
-        <p>在這裡確認數量、規格與總計，準備好後就可以前往結帳。</p>
+        <p>在這裡確認數量、規格、coupon 與總計，準備好後就可以前往結帳。</p>
       </div>
 
       <template v-if="isCartLoading">
@@ -148,13 +175,59 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
 
         <aside class="summary-card">
           <h2>訂單摘要</h2>
+
+          <section class="coupon-card">
+            <div class="coupon-header">
+              <div>
+                <p class="coupon-label">Coupon</p>
+                <strong>輸入優惠代碼</strong>
+              </div>
+              <span class="coupon-hint">滿 $100 可套用免運</span>
+            </div>
+
+            <div class="coupon-row">
+              <a-input
+                :value="couponInput"
+                size="large"
+                placeholder="例如 FREESHIP100"
+                class="coupon-input"
+                @update:value="cartStore.setCouponInput"
+              />
+              <a-button type="primary" size="large" class="apply-button" @click="applyCoupon">
+                套用
+              </a-button>
+            </div>
+
+            <p v-if="couponFeedback.message" class="coupon-feedback" :class="couponFeedbackClass">
+              {{ couponFeedback.message }}
+            </p>
+
+            <div v-if="appliedCoupon" class="applied-coupon">
+              <div>
+                <span class="applied-pill">{{ appliedCoupon.code }}</span>
+                <p>{{ appliedCoupon.label }}</p>
+              </div>
+              <button type="button" class="remove-coupon-button" @click="removeCoupon">
+                移除 coupon
+              </button>
+            </div>
+          </section>
+
           <dl>
             <div>
               <dt>商品小計</dt>
               <dd>{{ formatCurrency(subtotal) }}</dd>
             </div>
             <div>
-              <dt>運費</dt>
+              <dt>原始運費</dt>
+              <dd>{{ formatCurrency(shippingBase) }}</dd>
+            </div>
+            <div v-if="hasActiveCoupon" class="discount-row">
+              <dt>運費折扣</dt>
+              <dd>-{{ formatCurrency(couponDiscount) }}</dd>
+            </div>
+            <div>
+              <dt>實際運費</dt>
               <dd>{{ formatCurrency(shipping) }}</dd>
             </div>
             <div class="summary-total">
@@ -204,7 +277,8 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
 
 .empty-state,
 .summary-card,
-.cart-item {
+.cart-item,
+.coupon-card {
   border: 1px solid var(--color-border);
   border-radius: 24px;
   background: var(--color-surface);
@@ -251,7 +325,8 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
   border-radius: 18px;
 }
 
-.item-category {
+.item-category,
+.coupon-label {
   color: var(--color-accent);
   font-size: 0.8rem;
   font-weight: 700;
@@ -315,7 +390,9 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
 .remove-button,
 .link-button,
 .primary-link,
-.secondary-link {
+.secondary-link,
+.apply-button,
+.remove-coupon-button {
   border: 0;
   cursor: pointer;
   text-decoration: none;
@@ -338,6 +415,8 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
 .summary-card {
   padding: 1.5rem;
   align-self: start;
+  display: grid;
+  gap: 1rem;
 }
 
 .summary-card h2 {
@@ -345,8 +424,111 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
   font-weight: 700;
 }
 
+.coupon-card {
+  padding: 1rem;
+  display: grid;
+  gap: 0.85rem;
+  box-shadow: none;
+}
+
+.coupon-header,
+.applied-coupon {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.coupon-header strong {
+  color: var(--color-heading);
+}
+
+.coupon-hint,
+.applied-coupon p {
+  color: var(--color-text-soft);
+  font-size: 0.9rem;
+}
+
+.coupon-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+}
+
+.coupon-input {
+  width: 100%;
+}
+
+.remove-coupon-button {
+  border-radius: 999px;
+  padding: 0.85rem 1rem;
+  font-weight: 700;
+}
+.apply-button {
+  border-radius: 999px;
+  font-weight: 700;
+}
+
+.apply-button {
+  height: 3rem;
+  align-items: center;
+  text-align: center;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #0f766e, #115e59);
+  border: 1px solid rgba(15, 118, 110, 0.24);
+  box-shadow: 0 1rem 2rem rgba(15, 118, 110, 0.18);
+}
+
+.remove-coupon-button {
+  background: transparent;
+  color: var(--color-accent);
+  padding-right: 0;
+}
+
+.coupon-feedback {
+  padding: 0.8rem 0.95rem;
+  border-radius: 16px;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.coupon-feedback.success {
+  background: rgba(34, 197, 94, 0.12);
+  color: #166534;
+}
+
+.coupon-feedback.error {
+  background: rgba(248, 113, 113, 0.12);
+  color: #b91c1c;
+}
+
+.coupon-feedback.info {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+}
+
+:deep(.coupon-input .ant-input) {
+  min-height: 3rem;
+  border-radius: 16px;
+  border-color: var(--color-border);
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--color-heading);
+  box-shadow: none;
+}
+
+.applied-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--color-accent);
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
 .summary-card dl {
-  margin-top: 1.25rem;
   display: grid;
   gap: 0.85rem;
 }
@@ -356,6 +538,11 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
   justify-content: space-between;
   gap: 1rem;
   color: var(--color-text-soft);
+}
+
+.discount-row {
+  color: #166534 !important;
+  font-weight: 700;
 }
 
 .summary-total {
@@ -373,7 +560,6 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
   align-items: center;
   justify-content: center;
   width: 100%;
-  margin-top: 1rem;
   padding: 0.95rem 1.2rem;
   border-radius: 999px;
   font-weight: 700;
@@ -473,8 +659,16 @@ function decrementItem(itemKey: string, productName: string, quantity: number) {
     grid-template-columns: 1fr;
   }
 
-  .item-controls {
+  .item-controls,
+  .coupon-header,
+  .applied-coupon {
     justify-items: start;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .coupon-row {
+    grid-template-columns: 1fr;
   }
 }
 </style>

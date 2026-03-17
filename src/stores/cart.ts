@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 
+import { findCouponByCode, type CouponDefinition } from '@/data/coupons'
 import {
   findMatchingVariantCombination,
   findProductById,
@@ -18,8 +19,19 @@ type CartItem = {
   variantKey?: string
 }
 
-const CART_STORAGE_KEY = 'atelier-cart-items'
+type StoredCartState = {
+  items: CartItem[]
+  couponCode?: string
+}
+
+export type CartCouponFeedback = {
+  type: 'idle' | 'success' | 'error' | 'info'
+  message: string
+}
+
+const CART_STORAGE_KEY = 'atelier-cart-state'
 const BASE_CART_ITEM_KEY = 'base'
+const DEFAULT_SHIPPING_FEE = 12
 
 function toStoredVariantSelection(
   productId: number,
@@ -52,75 +64,100 @@ function createItemKey(productId: number, variantKey?: string) {
   return `${productId}::${variantKey ?? BASE_CART_ITEM_KEY}`
 }
 
-function loadStoredItems() {
-  if (typeof window === 'undefined') {
+function sanitizeStoredItems(value: unknown) {
+  if (!Array.isArray(value)) {
     return [] as CartItem[]
+  }
+
+  return value.flatMap((item): CartItem[] => {
+    if (typeof item !== 'object' || item === null) {
+      return []
+    }
+
+    const { productId, quantity, variantSelection } = item as Partial<CartItem>
+
+    if (
+      typeof productId !== 'number' ||
+      !Number.isInteger(productId) ||
+      typeof quantity !== 'number' ||
+      !Number.isInteger(quantity) ||
+      quantity <= 0
+    ) {
+      return []
+    }
+
+    const product = findProductById(productId)
+
+    if (!product) {
+      return []
+    }
+
+    const normalizedSelection = toStoredVariantSelection(productId, variantSelection)
+
+    return [
+      {
+        productId,
+        quantity,
+        variantSelection: normalizedSelection,
+        variantKey: toVariantKey(normalizedSelection),
+      },
+    ]
+  })
+}
+
+function loadStoredCartState() {
+  if (typeof window === 'undefined') {
+    return {
+      items: [] as CartItem[],
+      couponCode: '',
+    }
   }
 
   const rawValue = window.localStorage.getItem(CART_STORAGE_KEY)
 
   if (!rawValue) {
-    return [] as CartItem[]
+    return {
+      items: [] as CartItem[],
+      couponCode: '',
+    }
   }
 
   try {
-    const parsedValue = JSON.parse(rawValue)
+    const parsedValue = JSON.parse(rawValue) as StoredCartState | CartItem[]
 
-    if (!Array.isArray(parsedValue)) {
-      return [] as CartItem[]
+    if (Array.isArray(parsedValue)) {
+      return {
+        items: sanitizeStoredItems(parsedValue),
+        couponCode: '',
+      }
     }
 
-    return parsedValue.flatMap((item): CartItem[] => {
-      if (typeof item !== 'object' || item === null) {
-        return []
-      }
-
-      const { productId, quantity, variantSelection } = item as Partial<CartItem>
-
-      if (
-        typeof productId !== 'number' ||
-        !Number.isInteger(productId) ||
-        typeof quantity !== 'number' ||
-        !Number.isInteger(quantity) ||
-        quantity <= 0
-      ) {
-        return []
-      }
-
-      const product = findProductById(productId)
-
-      if (!product) {
-        return []
-      }
-
-      const normalizedSelection = toStoredVariantSelection(productId, variantSelection)
-
-      return [
-        {
-          productId,
-          quantity,
-          variantSelection: normalizedSelection,
-          variantKey: toVariantKey(normalizedSelection),
-        },
-      ]
-    })
+    return {
+      items: sanitizeStoredItems(parsedValue.items),
+      couponCode:
+        typeof parsedValue.couponCode === 'string' ? parsedValue.couponCode.trim().toUpperCase() : '',
+    }
   } catch {
-    return [] as CartItem[]
+    return {
+      items: [] as CartItem[],
+      couponCode: '',
+    }
   }
 }
 
-export const useCartStore = defineStore('cart', () => {
-  const items = ref<CartItem[]>(loadStoredItems())
+function createCouponFeedback(
+  type: CartCouponFeedback['type'],
+  message: string,
+): CartCouponFeedback {
+  return { type, message }
+}
 
-  if (typeof window !== 'undefined') {
-    watch(
-      items,
-      (nextItems) => {
-        window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(nextItems))
-      },
-      { deep: true },
-    )
-  }
+export const useCartStore = defineStore('cart', () => {
+  const storedState = loadStoredCartState()
+  const items = ref<CartItem[]>(storedState.items)
+  const couponInput = ref(storedState.couponCode)
+  const appliedCouponCode = ref(storedState.couponCode)
+  const couponFeedback = ref<CartCouponFeedback>(createCouponFeedback('idle', ''))
 
   const detailedItems = computed(() =>
     items.value
@@ -147,13 +184,136 @@ export const useCartStore = defineStore('cart', () => {
       .filter((item): item is NonNullable<typeof item> => item !== null),
   )
 
-  const itemCount = computed(() =>
-    items.value.reduce((total, item) => total + item.quantity, 0),
-  )
+  const itemCount = computed(() => items.value.reduce((total, item) => total + item.quantity, 0))
 
   const subtotal = computed(() =>
     detailedItems.value.reduce((total, item) => total + item.lineTotal, 0),
   )
+
+  const shippingBase = computed(() => (detailedItems.value.length > 0 ? DEFAULT_SHIPPING_FEE : 0))
+
+  const appliedCoupon = computed<CouponDefinition | null>(() => {
+    if (appliedCouponCode.value.trim().length === 0) {
+      return null
+    }
+
+    return findCouponByCode(appliedCouponCode.value)
+  })
+
+  const couponDiscount = computed(() => {
+    if (!appliedCoupon.value || shippingBase.value === 0) {
+      return 0
+    }
+
+    if (
+      appliedCoupon.value.type === 'free-shipping' &&
+      subtotal.value > appliedCoupon.value.minimumSubtotalExclusive
+    ) {
+      return shippingBase.value
+    }
+
+    return 0
+  })
+
+  const shipping = computed(() => Math.max(shippingBase.value - couponDiscount.value, 0))
+
+  const total = computed(() => subtotal.value + shipping.value)
+
+  const hasActiveCoupon = computed(() => appliedCoupon.value !== null && couponDiscount.value > 0)
+
+  function validateCouponCode(rawCode: string) {
+    const normalizedCode = rawCode.trim().toUpperCase()
+
+    if (normalizedCode.length === 0) {
+      return {
+        coupon: null,
+        feedback: createCouponFeedback('error', '請先輸入 coupon code。'),
+      }
+    }
+
+    const coupon = findCouponByCode(normalizedCode)
+
+    if (!coupon) {
+      return {
+        coupon: null,
+        feedback: createCouponFeedback('error', '找不到這組 coupon code，請重新確認。'),
+      }
+    }
+
+    if (detailedItems.value.length === 0) {
+      return {
+        coupon,
+        feedback: createCouponFeedback('error', '購物車目前是空的，無法套用 coupon。'),
+      }
+    }
+
+    if (subtotal.value <= coupon.minimumSubtotalExclusive) {
+      return {
+        coupon,
+        feedback: createCouponFeedback(
+          'error',
+          `此 coupon 需在商品小計超過 $${coupon.minimumSubtotalExclusive} 後才能使用。`,
+        ),
+      }
+    }
+
+    return {
+      coupon,
+      feedback: createCouponFeedback('success', `已套用 ${coupon.code}，本次訂單享免運優惠。`),
+    }
+  }
+
+  function setCouponInput(value: string) {
+    couponInput.value = value.trim().toUpperCase()
+  }
+
+  function applyCoupon(rawCode = couponInput.value) {
+    const normalizedCode = rawCode.trim().toUpperCase()
+    couponInput.value = normalizedCode
+
+    const result = validateCouponCode(normalizedCode)
+
+    if (!result.coupon || result.feedback.type === 'error') {
+      appliedCouponCode.value = ''
+      couponFeedback.value = result.feedback
+      return false
+    }
+
+    appliedCouponCode.value = result.coupon.code
+    couponFeedback.value = result.feedback
+    return true
+  }
+
+  function removeCoupon(feedbackMessage = '已移除 coupon。') {
+    appliedCouponCode.value = ''
+    couponInput.value = ''
+    couponFeedback.value = createCouponFeedback('info', feedbackMessage)
+  }
+
+  function revalidateCoupon() {
+    if (appliedCouponCode.value.trim().length === 0) {
+      if (detailedItems.value.length === 0) {
+        couponInput.value = ''
+      }
+
+      return
+    }
+
+    const normalizedCode = appliedCouponCode.value.trim().toUpperCase()
+    const result = validateCouponCode(normalizedCode)
+
+    if (!result.coupon || result.feedback.type === 'error') {
+      appliedCouponCode.value = ''
+      couponFeedback.value =
+        detailedItems.value.length === 0
+          ? createCouponFeedback('info', '購物車已清空，coupon 已自動移除。')
+          : createCouponFeedback('info', '購物車內容已變更，coupon 已不再符合使用條件。')
+      return
+    }
+
+    couponInput.value = normalizedCode
+    couponFeedback.value = result.feedback
+  }
 
   function addItem(productId: number, variantSelection?: ProductVariantSelection) {
     const product = findProductById(productId)
@@ -228,15 +388,50 @@ export const useCartStore = defineStore('cart', () => {
     items.value = []
   }
 
+  if (typeof window !== 'undefined') {
+    watch(
+      [items, appliedCouponCode],
+      ([nextItems, nextCouponCode]) => {
+        const nextState: StoredCartState = {
+          items: nextItems,
+          couponCode: nextCouponCode.trim().toUpperCase(),
+        }
+
+        window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(nextState))
+      },
+      { deep: true, immediate: true },
+    )
+  }
+
+  watch(
+    subtotal,
+    () => {
+      revalidateCoupon()
+    },
+    { immediate: true },
+  )
+
   return {
     items,
     detailedItems,
     itemCount,
     subtotal,
+    shippingBase,
+    shipping,
+    couponInput,
+    appliedCoupon,
+    couponDiscount,
+    couponFeedback,
+    total,
+    hasActiveCoupon,
     addItem,
     incrementItem,
     decrementItem,
     removeItem,
     clearCart,
+    setCouponInput,
+    applyCoupon,
+    removeCoupon,
+    revalidateCoupon,
   }
 })

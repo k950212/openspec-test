@@ -22,7 +22,7 @@ export const useUiStore = defineStore('ui', () => {
     })
   }
 
-  function showWarningToast(message: string, title = '請先登入') {
+  function showWarningToast(message: string, title = '提醒') {
     notification.warning({
       message: title,
       description: message,

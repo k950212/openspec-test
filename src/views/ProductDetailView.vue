@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, reactive, watch } from 'vue'
+import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import {
   findMatchingVariantCombination,
   findProductById,
-  getRelatedProducts,
+  getProductGallery,
   getProductVariantSelectionSummary,
+  getRelatedProducts,
   hasProductVariants,
   isProductVariantSelectionComplete,
   isVariantValueAvailable,
@@ -20,6 +21,8 @@ import { useRecentlyViewedStore } from '@/stores/recentlyViewed'
 import { useReviewStore } from '@/stores/reviews'
 import { useUiStore } from '@/stores/ui'
 import { useWishlistStore } from '@/stores/wishlist'
+
+const SWIPE_THRESHOLD = 42
 
 const router = useRouter()
 const route = useRoute()
@@ -37,7 +40,16 @@ const reviewForm = reactive({
 })
 
 const variantSelection = reactive<ProductVariantSelection>({})
-const isDetailLoading = reactive({ value: true })
+const isDetailLoading = ref(true)
+const activeImageIndex = ref(0)
+const isPreviewOpen = ref(false)
+const failedImages = ref<string[]>([])
+
+const touchState = reactive({
+  startX: 0,
+  endX: 0,
+})
+
 let detailLoadTimer: number | undefined
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
@@ -58,12 +70,23 @@ const product = computed(() =>
 )
 
 const variantOptionGroups = computed(() => product.value?.variants?.optionGroups ?? [])
-const relatedProducts = computed(() =>
-  product.value ? getRelatedProducts(product.value.id, 4) : [],
-)
+const relatedProducts = computed(() => (product.value ? getRelatedProducts(product.value.id, 4) : []))
 const productReviews = computed(() =>
   product.value ? reviewStore.getReviewsForProduct(product.value.id) : [],
 )
+const productGallery = computed(() =>
+  product.value ? getProductGallery(product.value, variantSelection) : [],
+)
+const gallerySignature = computed(() => productGallery.value.join('||'))
+const hasMultipleImages = computed(() => productGallery.value.length > 1)
+const activeImage = computed(() => productGallery.value[activeImageIndex.value] ?? '')
+const hasActiveVariantImageSet = computed(() => {
+  if (!product.value) {
+    return false
+  }
+
+  return (findMatchingVariantCombination(product.value, variantSelection)?.gallery?.length ?? 0) > 0
+})
 const existingUserReview = computed(() => {
   if (!product.value) {
     return null
@@ -92,7 +115,7 @@ const selectionState = computed(() => {
     return {
       isComplete: false,
       isValid: false,
-      message: '請先選擇所有必填規格，才能加入購物車。',
+      message: '請先完成所有規格選擇，再加入購物車。',
       summary: getProductVariantSelectionSummary(product.value, variantSelection),
     }
   }
@@ -103,7 +126,7 @@ const selectionState = computed(() => {
     return {
       isComplete: true,
       isValid: false,
-      message: '目前規格組合不可購買，請改選其他組合。',
+      message: '目前選擇的規格組合不可購買，請改選其他搭配。',
       summary: getProductVariantSelectionSummary(product.value, variantSelection),
     }
   }
@@ -111,7 +134,9 @@ const selectionState = computed(() => {
   return {
     isComplete: true,
     isValid: true,
-    message: '目前規格可加入購物車。',
+    message: hasActiveVariantImageSet.value
+      ? '目前規格可加入購物車，圖片也已切換為對應款式。'
+      : '目前規格可加入購物車。',
     summary: getProductVariantSelectionSummary(product.value, variantSelection),
   }
 })
@@ -153,11 +178,24 @@ watch(
       delete variantSelection[key]
     })
 
+    activeImageIndex.value = 0
+    isPreviewOpen.value = false
+    failedImages.value = []
+
     if (!nextProduct) {
       return
     }
 
     recentlyViewedStore.recordProductView(nextProduct.id)
+  },
+  { immediate: true },
+)
+
+watch(
+  gallerySignature,
+  () => {
+    activeImageIndex.value = 0
+    isPreviewOpen.value = false
   },
   { immediate: true },
 )
@@ -188,21 +226,21 @@ function formatDate(value: string) {
   return dateFormatter.format(new Date(value))
 }
 
-function isFavorited(productId: number) {
-  return wishlistStore.isFavorited(productId)
+function isFavorited(nextProductId: number) {
+  return wishlistStore.isFavorited(nextProductId)
 }
 
-function toggleFavorite(productId: number) {
+function toggleFavorite(nextProductId: number) {
   if (!authStore.isAuthenticated) {
-    uiStore.showWarningToast('請先登入再收藏商品。')
+    uiStore.showWarningToast('請先登入後再管理收藏。')
     void router.push('/login')
     return
   }
 
-  const added = wishlistStore.toggleFavorite(productId)
+  const added = wishlistStore.toggleFavorite(nextProductId)
   uiStore.showSuccessToast(
-    added ? '已加入收藏清單。' : '已從收藏清單移除。',
-    added ? '收藏成功' : '已更新',
+    added ? '商品已加入收藏。' : '商品已從收藏中移除。',
+    added ? '收藏成功' : '已取消收藏',
   )
 }
 
@@ -234,7 +272,7 @@ function addToCart() {
   const added = cartStore.addItem(product.value.id, variantSelection)
 
   if (!added) {
-    uiStore.showWarningToast(selectionState.value.message)
+    uiStore.showWarningToast(selectionState.value.message, '無法加入購物車')
     return
   }
 
@@ -247,13 +285,13 @@ function submitReview() {
   }
 
   if (!authStore.isAuthenticated) {
-    uiStore.showWarningToast('請先登入再留下評論。')
+    uiStore.showWarningToast('請先登入後再撰寫評論。')
     void router.push('/login')
     return
   }
 
   if (!isReviewFormValid.value) {
-    uiStore.showWarningToast('請選擇 1 到 5 分，並輸入簡短評論內容。')
+    uiStore.showWarningToast('請填寫 1 到 5 星評分，並輸入評論內容。', '評論資料未完成')
     return
   }
 
@@ -267,13 +305,115 @@ function submitReview() {
 
   reviewForm.rating = 5
   reviewForm.content = ''
-  uiStore.showSuccessToast('你的評論已顯示在這個商品頁面上。', '評論已送出')
+  uiStore.showSuccessToast('你的評論已成功送出。', '評論完成')
+}
+
+function setActiveImage(index: number) {
+  if (index < 0 || index >= productGallery.value.length) {
+    return
+  }
+
+  activeImageIndex.value = index
+}
+
+function previewImage(index: number) {
+  if (!supportsHoverPreview()) {
+    return
+  }
+
+  setActiveImage(index)
+}
+
+function supportsHoverPreview() {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false
+  }
+
+  return window.matchMedia('(hover: hover) and (pointer: fine)').matches
+}
+
+function openPreviewModal() {
+  if (!activeImage.value) {
+    return
+  }
+
+  isPreviewOpen.value = true
+}
+
+function closePreviewModal() {
+  isPreviewOpen.value = false
+}
+
+function showPreviousImage() {
+  if (!hasMultipleImages.value) {
+    return
+  }
+
+  activeImageIndex.value =
+    activeImageIndex.value === 0 ? productGallery.value.length - 1 : activeImageIndex.value - 1
+}
+
+function showNextImage() {
+  if (!hasMultipleImages.value) {
+    return
+  }
+
+  activeImageIndex.value =
+    activeImageIndex.value === productGallery.value.length - 1 ? 0 : activeImageIndex.value + 1
+}
+
+function handleTouchStart(event: TouchEvent) {
+  if (!hasMultipleImages.value) {
+    return
+  }
+
+  touchState.startX = event.touches[0]?.clientX ?? 0
+  touchState.endX = touchState.startX
+}
+
+function handleTouchMove(event: TouchEvent) {
+  if (!hasMultipleImages.value) {
+    return
+  }
+
+  touchState.endX = event.touches[0]?.clientX ?? touchState.startX
+}
+
+function handleTouchEnd() {
+  if (!hasMultipleImages.value) {
+    return
+  }
+
+  const distance = touchState.endX - touchState.startX
+
+  if (Math.abs(distance) < SWIPE_THRESHOLD) {
+    return
+  }
+
+  if (distance < 0) {
+    showNextImage()
+    return
+  }
+
+  showPreviousImage()
+}
+
+function markImageFailed(imageUrl: string) {
+  if (failedImages.value.includes(imageUrl)) {
+    return
+  }
+
+  failedImages.value = [...failedImages.value, imageUrl]
+}
+
+function isImageFailed(imageUrl: string) {
+  return failedImages.value.includes(imageUrl)
 }
 </script>
 
 <template>
   <main class="product-detail-page">
-    <template v-if="isDetailLoading.value">
+    <template v-if="isDetailLoading">
       <section class="detail-shell skeleton-detail-shell" aria-hidden="true">
         <div class="skeleton-detail-media"></div>
         <div class="detail-copy">
@@ -297,12 +437,53 @@ function submitReview() {
     </template>
 
     <section v-else-if="product" class="detail-shell">
-      <div class="detail-media">
-        <img :src="product.image" :alt="product.name" />
+      <div class="gallery-panel">
+        <div
+          class="detail-media"
+          @touchstart.passive="handleTouchStart"
+          @touchmove.passive="handleTouchMove"
+          @touchend="handleTouchEnd"
+        >
+          <button type="button" class="main-image-button" @click="openPreviewModal">
+            <div v-if="activeImage && !isImageFailed(activeImage)" class="detail-image-frame">
+              <img :src="activeImage" :alt="product.name" @error="markImageFailed(activeImage)" />
+            </div>
+
+            <div v-else class="detail-image-fallback">
+              <strong>圖片載入中斷</strong>
+              <p>你仍可透過下方縮圖切換其他商品圖片。</p>
+            </div>
+
+          </button>
+
+          <div v-if="hasMultipleImages" class="swipe-hint">可左右滑動瀏覽更多圖片</div>
+        </div>
+
+        <div v-if="hasMultipleImages" class="thumbnail-rail" role="list" aria-label="商品圖片縮圖">
+          <button
+            v-for="(image, index) in productGallery"
+            :key="`${product.id}-${image}-${index}`"
+            type="button"
+            class="thumbnail-button"
+            :class="{ active: activeImageIndex === index }"
+            :aria-pressed="activeImageIndex === index"
+            @mouseenter="previewImage(index)"
+            @focus="setActiveImage(index)"
+            @click="setActiveImage(index)"
+          >
+            <img
+              v-if="!isImageFailed(image)"
+              :src="image"
+              :alt="`${product.name} 縮圖 ${index + 1}`"
+              @error="markImageFailed(image)"
+            />
+            <span v-else class="thumbnail-fallback">圖片 {{ index + 1 }}</span>
+          </button>
+        </div>
       </div>
 
       <div class="detail-copy">
-        <RouterLink to="/" class="back-link">返回商店首頁</RouterLink>
+        <RouterLink to="/" class="back-link">返回商品列表</RouterLink>
         <p class="eyebrow">{{ product.category }}</p>
         <h1>{{ product.name }}</h1>
         <p class="price">{{ formatCurrency(product.price) }}</p>
@@ -312,13 +493,13 @@ function submitReview() {
           <div class="variant-header">
             <div>
               <p class="section-label">商品規格</p>
-              <h2>選擇你的商品配置</h2>
+              <h2>先選好想要的款式</h2>
             </div>
             <span
               class="availability-chip"
               :class="{ ready: selectionState.isValid && selectionState.isComplete }"
             >
-              {{ selectionState.isValid && selectionState.isComplete ? '可購買' : '尚未完成選擇' }}
+              {{ selectionState.isValid && selectionState.isComplete ? '可加入購物車' : '尚未完成選擇' }}
             </span>
           </div>
 
@@ -326,7 +507,7 @@ function submitReview() {
             <div v-for="group in variantOptionGroups" :key="group.id" class="variant-group">
               <div class="group-heading">
                 <strong>{{ group.label }}</strong>
-                <span>{{ variantSelection[group.id] ?? '請選擇' }}</span>
+                <span>{{ variantSelection[group.id] ?? '尚未選擇' }}</span>
               </div>
 
               <div class="variant-values">
@@ -387,12 +568,12 @@ function submitReview() {
       </div>
     </section>
 
-    <section v-if="!isDetailLoading.value && product" class="related-products-shell">
+    <section v-if="!isDetailLoading && product" class="related-products-shell">
       <div class="related-products-header">
         <div>
-          <p class="eyebrow">Related Products</p>
+          <p class="eyebrow">相關商品</p>
           <h2>你可能也會喜歡</h2>
-          <p>看看同分類中的其他商品，延續你的瀏覽節奏。</p>
+          <p>同分類中的其他商品也許會更適合你的空間與使用情境。</p>
         </div>
       </div>
 
@@ -424,17 +605,17 @@ function submitReview() {
 
       <div v-else class="section-empty-state">
         <h3>目前沒有相關商品</h3>
-        <p>這個分類中的可推薦商品暫時不足，你可以回到首頁繼續探索其他商品。</p>
+        <p>這個分類中的可推薦商品暫時不足，你可以回到首頁繼續探索其他選擇。</p>
         <RouterLink to="/" class="secondary-action">回到商店首頁</RouterLink>
       </div>
     </section>
 
-    <section v-if="!isDetailLoading.value && product" class="reviews-shell">
+    <section v-if="!isDetailLoading && product" class="reviews-shell">
       <div class="reviews-header">
         <div>
           <p class="eyebrow">評論</p>
-          <h2>看看其他人怎麼說</h2>
-          <p>所有訪客都能閱讀評論，登入會員後也可以留下自己的使用心得。</p>
+          <h2>看看其他人的使用心得</h2>
+          <p>登入後可以留下你的實際使用感受，幫助下一位購買者更快做決定。</p>
         </div>
         <span class="review-count">{{ productReviews.length }} 則評論</span>
       </div>
@@ -443,7 +624,7 @@ function submitReview() {
         <section class="review-form-card">
           <template v-if="authStore.isAuthenticated">
             <p class="section-label">
-              {{ existingUserReview ? '再寫一則評論' : '留下評論' }}
+              {{ existingUserReview ? '你已提交過評論' : '新增評論' }}
             </p>
 
             <form class="review-form" @submit.prevent="submitReview">
@@ -457,7 +638,7 @@ function submitReview() {
                 <a-textarea
                   v-model:value="reviewForm.content"
                   :rows="5"
-                  placeholder="分享商品手感、使用方式或整體體驗。"
+                  placeholder="分享你對這項商品的材質、尺寸或實際使用感受。"
                 />
               </label>
 
@@ -479,7 +660,7 @@ function submitReview() {
 
           <div v-if="productReviews.length === 0" class="review-empty-state">
             <h3>目前還沒有評論</h3>
-            <p>成為第一個分享這項商品外觀、手感與日常使用體驗的人吧。</p>
+            <p>你可以成為第一位留下心得的人，幫助其他人更了解這項商品。</p>
           </div>
 
           <div v-else class="review-list">
@@ -499,16 +680,74 @@ function submitReview() {
       </div>
     </section>
 
-    <section v-else-if="!isDetailLoading.value" class="not-found-card">
+    <section v-else-if="!isDetailLoading" class="not-found-card">
       <p class="eyebrow">找不到商品</p>
       <h1>目前找不到這項商品。</h1>
       <p>這個連結可能已失效，或商品已從目前的商店清單中移除。</p>
 
       <div class="not-found-actions">
-        <RouterLink to="/" class="primary-action">返回商店首頁</RouterLink>
-        <RouterLink to="/cart" class="secondary-action">開啟購物車</RouterLink>
+        <RouterLink to="/" class="primary-action">返回商品首頁</RouterLink>
+        <RouterLink to="/cart" class="secondary-action">前往購物車</RouterLink>
       </div>
     </section>
+
+    <teleport to="body">
+      <div v-if="isPreviewOpen && product" class="preview-modal" @click.self="closePreviewModal">
+        <div class="preview-dialog" role="dialog" aria-modal="true" :aria-label="`${product.name} 圖片預覽`">
+          <button type="button" class="preview-close" @click="closePreviewModal">關閉</button>
+
+          <div class="preview-stage">
+            <button
+              v-if="hasMultipleImages"
+              type="button"
+              class="preview-nav"
+              aria-label="查看上一張圖片"
+              @click="showPreviousImage"
+            >
+              ‹
+            </button>
+
+            <div v-if="activeImage && !isImageFailed(activeImage)" class="preview-image-frame">
+              <img :src="activeImage" :alt="product.name" @error="markImageFailed(activeImage)" />
+            </div>
+
+            <div v-else class="preview-image-fallback">
+              <strong>目前無法顯示這張圖片</strong>
+              <p>你可以切換到其他縮圖繼續瀏覽。</p>
+            </div>
+
+            <button
+              v-if="hasMultipleImages"
+              type="button"
+              class="preview-nav"
+              aria-label="查看下一張圖片"
+              @click="showNextImage"
+            >
+              ›
+            </button>
+          </div>
+
+          <div v-if="hasMultipleImages" class="preview-thumbnail-rail">
+            <button
+              v-for="(image, index) in productGallery"
+              :key="`${product.id}-preview-${image}-${index}`"
+              type="button"
+              class="preview-thumbnail"
+              :class="{ active: activeImageIndex === index }"
+              @click="setActiveImage(index)"
+            >
+              <img
+                v-if="!isImageFailed(image)"
+                :src="image"
+                :alt="`${product.name} 預覽縮圖 ${index + 1}`"
+                @error="markImageFailed(image)"
+              />
+              <span v-else>圖片 {{ index + 1 }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </teleport>
   </main>
 </template>
 
@@ -537,17 +776,130 @@ function submitReview() {
 
 .detail-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
   gap: 1.5rem;
   padding: 1.5rem;
 }
 
-.detail-media img {
+.gallery-panel {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.detail-media {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.main-image-button {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: zoom-in;
+}
+
+.detail-image-frame,
+.detail-image-fallback,
+.preview-image-frame,
+.preview-image-fallback {
+  min-height: 24rem;
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(241, 245, 249, 0.9);
+}
+
+.detail-image-frame img,
+.preview-image-frame img {
   width: 100%;
   height: 100%;
   min-height: 24rem;
   object-fit: cover;
-  border-radius: 22px;
+  display: block;
+}
+
+.detail-image-fallback,
+.preview-image-fallback {
+  display: grid;
+  place-items: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  text-align: center;
+  color: var(--color-text-soft);
+  border: 1px dashed rgba(15, 118, 110, 0.18);
+}
+
+.detail-image-fallback strong,
+.preview-image-fallback strong {
+  color: var(--color-heading);
+}
+
+.swipe-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 0.5rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--color-accent);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.swipe-hint {
+  display: none;
+}
+
+.swipe-hint {
+  justify-self: start;
+}
+
+.thumbnail-rail,
+.preview-thumbnail-rail {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(5.5rem, 6.8rem);
+  gap: 0.75rem;
+  overflow-x: auto;
+  padding-bottom: 0.25rem;
+}
+
+.thumbnail-button,
+.preview-thumbnail {
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  aspect-ratio: 1;
+  border-radius: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+}
+
+.thumbnail-button.active,
+.preview-thumbnail.active {
+  border-color: rgba(15, 118, 110, 0.38);
+  box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.12);
+}
+
+.thumbnail-button img,
+.preview-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.thumbnail-fallback {
+  padding: 0.6rem;
+  color: var(--color-text-soft);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
 }
 
 .detail-copy {
@@ -988,6 +1340,59 @@ function submitReview() {
   padding: 2rem;
 }
 
+.preview-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: start center;
+  padding: 1.5rem;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(10px);
+  overflow-y: auto;
+}
+
+.preview-dialog {
+  width: min(100%, 72rem);
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 2rem 4rem rgba(15, 23, 42, 0.26);
+  margin: auto 0;
+}
+
+.preview-close {
+  justify-self: end;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--color-accent);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.preview-stage {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+}
+
+.preview-nav {
+  width: 3.4rem;
+  height: 3.4rem;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--color-accent);
+  font-size: 2rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
 .skeleton-detail-shell {
   background: rgba(255, 255, 255, 0.88);
 }
@@ -1066,14 +1471,24 @@ function submitReview() {
   }
 }
 
+@media (max-width: 1100px) {
+  .related-products-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 960px) {
   .detail-shell,
-  .related-products-grid,
   .reviews-layout {
     grid-template-columns: 1fr;
   }
 
-  .detail-media img,
+  .detail-image-frame,
+  .detail-image-frame img,
+  .detail-image-fallback,
+  .preview-image-frame,
+  .preview-image-frame img,
+  .preview-image-fallback,
   .skeleton-detail-media {
     min-height: 18rem;
   }
@@ -1086,6 +1501,45 @@ function submitReview() {
   .related-product-footer {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .preview-dialog {
+    width: min(100%, 42rem);
+  }
+
+  .preview-stage {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-nav {
+    justify-self: center;
+  }
+}
+
+@media (max-width: 700px) {
+  .product-detail-page {
+    gap: 1rem;
+  }
+
+  .swipe-hint {
+    display: inline-flex;
+  }
+
+  .related-products-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .thumbnail-rail,
+  .preview-thumbnail-rail {
+    grid-auto-columns: minmax(4.8rem, 5.6rem);
+  }
+
+  .preview-modal {
+    padding: 0.75rem;
+  }
+
+  .preview-dialog {
+    margin: 0;
   }
 }
 </style>
