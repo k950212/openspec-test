@@ -1,0 +1,85 @@
+@import './base.css';
+
+#app {
+  min-height: 100vh;
+  padding: 1.5rem;
+  font-weight: 400;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.22s ease,
+    background-color 0.22s ease,
+    color 0.22s ease,
+    filter 0.22s ease;
+}
+
+@media (hover: hover) {
+  a:hover {
+    background-color: rgba(15, 118, 110, 0.12);
+  }
+}
+
+:where(
+    button,
+    .primary-button,
+    .primary-link,
+    .secondary-link,
+    .link-button,
+    .remove-button,
+    .app-nav a
+  ) {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.22s ease,
+    background-color 0.22s ease,
+    color 0.22s ease,
+    filter 0.22s ease;
+  transform-origin: center;
+  will-change: transform;
+}
+
+@media (hover: hover) {
+  :where(
+      button,
+      .primary-button,
+      .primary-link,
+      .secondary-link,
+      .link-button,
+      .remove-button,
+      .app-nav a
+    ):not(:disabled):hover {
+    transform: translateY(-1px);
+    box-shadow: 0 0.7rem 1.2rem rgba(15, 23, 42, 0.12);
+  }
+}
+
+:where(
+    button,
+    .primary-button,
+    .primary-link,
+    .secondary-link,
+    .link-button,
+    .remove-button,
+    .app-nav a
+  ):not(:disabled):active {
+  transform: translateY(2px) scale(0.97);
+  box-shadow: none;
+  filter: saturate(0.92);
+}
+
+:where(
+    button,
+    .primary-button,
+    .primary-link,
+    .secondary-link,
+    .link-button,
+    .remove-button,
+    .app-nav a
+  ):focus-visible {
+  outline: 2px solid rgba(15, 118, 110, 0.35);
+  outline-offset: 3px;
+}
