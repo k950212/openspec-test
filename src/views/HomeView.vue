@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterLink, useRouter } from 'vue-router'
 
-import { products } from '@/data/products'
+import { hasProductVariants, products } from '@/data/products'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 import { useUiStore } from '@/stores/ui'
@@ -12,7 +12,7 @@ import { useWishlistStore } from '@/stores/wishlist'
 type SortOption = 'default' | 'price-asc' | 'price-desc'
 
 const PAGE_SIZE_OPTIONS = ['6', '12', '18']
-const ALL_CATEGORY = '全部'
+const ALL_CATEGORY = '全部分類'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -37,9 +37,9 @@ const categoryOptions = computed(() =>
 )
 
 const sortOptions = [
-  { label: '預設順序', value: 'default' as const },
-  { label: '價格低到高', value: 'price-asc' as const },
-  { label: '價格高到低', value: 'price-desc' as const },
+  { label: '預設排序', value: 'default' as const },
+  { label: '價格：低到高', value: 'price-asc' as const },
+  { label: '價格：高到低', value: 'price-desc' as const },
 ]
 
 const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase())
@@ -104,7 +104,7 @@ watch(totalPages, (nextTotalPages) => {
   }
 })
 
-const currencyFormatter = new Intl.NumberFormat('zh-TW', {
+const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
   maximumFractionDigits: 0,
@@ -115,18 +115,34 @@ function formatCurrency(value: number) {
 }
 
 function addToCart(productId: number, productName: string) {
+  const product = products.find((entry) => entry.id === productId)
+
+  if (!product) {
+    return
+  }
+
+  if (hasProductVariants(product)) {
+    uiStore.showWarningToast('請先到商品頁選擇規格，再加入購物車。', '請先選擇規格')
+    void router.push(`/products/${productId}`)
+    return
+  }
+
   cartStore.addItem(productId)
-  uiStore.showSuccessToast(`${productName} 已加入購物車。`, '已加入購物車')
+  uiStore.showSuccessToast(`${productName} 已加入購物車。`, '加入成功')
 }
 
 function toggleFavorite(productId: number) {
   if (!authStore.isAuthenticated) {
-    uiStore.showWarningToast('登入後才能使用收藏功能，請先登入會員帳號。')
+    uiStore.showWarningToast('請先登入再收藏商品。')
     void router.push('/login')
     return
   }
 
-  wishlistStore.toggleFavorite(productId)
+  const added = wishlistStore.toggleFavorite(productId)
+  uiStore.showSuccessToast(
+    added ? '已加入收藏清單。' : '已從收藏清單移除。',
+    added ? '收藏成功' : '已更新',
+  )
 }
 
 function isFavorited(productId: number) {
@@ -154,14 +170,14 @@ function handlePageChange(page: number, nextPageSize: number) {
     <section class="hero-card">
       <div class="hero-copy">
         <p class="eyebrow">Studio Selection</p>
-        <h1>挑選讓日常更舒服的風格選物</h1>
+        <h1>精心挑選的物品，讓日常生活變得更慢、更美好。</h1>
         <p class="description">
-          從居家、穿搭到桌面配件，我們整理了一系列兼具實用與美感的商品，讓你更輕鬆找到適合自己的生活提案。
+          瀏覽我們精心挑選的靈活家具、日常必需品和觸感舒適的配件，打造緊湊型現代生活空間。
         </p>
 
         <div class="hero-actions">
-          <a href="#catalog" class="primary-button">開始逛商品</a>
-          <div class="cart-pill">購物車商品 {{ itemCount }} 件</div>
+          <a href="#catalog" class="primary-button">瀏覽商品</a>
+          <div class="cart-pill">購物車：{{ itemCount }} 件商品</div>
         </div>
       </div>
 
@@ -182,23 +198,23 @@ function handlePageChange(page: number, nextPageSize: number) {
 
     <section id="catalog" class="catalog-section">
       <div class="section-heading">
-        <p class="eyebrow">Catalog</p>
-        <h2>用搜尋、分類、排序與分頁快速找到想要的商品</h2>
+        <p class="eyebrow">商品列表</p>
+        <h2>可依關鍵字、分類與價格快速篩選商品。</h2>
       </div>
 
       <div class="catalog-toolbar">
         <label class="search-field">
-          <span>搜尋商品</span>
+          <span>搜尋</span>
           <a-input
             v-model:value="searchQuery"
             type="search"
-            placeholder="輸入商品名稱、分類或描述關鍵字"
+            placeholder="依商品名稱、分類或描述搜尋"
             size="large"
           />
         </label>
 
         <label class="filter-field">
-          <span>商品分類</span>
+          <span>分類</span>
           <a-select
             v-model:value="selectedCategory"
             :options="categoryOptions"
@@ -207,30 +223,30 @@ function handlePageChange(page: number, nextPageSize: number) {
         </label>
 
         <label class="filter-field">
-          <span>價格排序</span>
+          <span>排序</span>
           <a-select v-model:value="selectedSort" :options="sortOptions" class="toolbar-select" />
         </label>
 
-        <button type="button" class="clear-button" @click="clearFilters">清除條件</button>
+        <button type="button" class="clear-button" @click="clearFilters">清除篩選</button>
       </div>
 
       <div v-if="!hasCatalogProducts" class="empty-state">
-        <h3>目前沒有可顯示的商品</h3>
-        <p>商品資料暫時為空，請稍後再回來看看最新選品。</p>
+        <h3>目前沒有商品</h3>
+        <p>請先在本地商品資料中加入商品，才能顯示商店首頁。</p>
       </div>
 
       <div v-else-if="filteredProducts.length === 0" class="empty-state">
         <h3>找不到符合條件的商品</h3>
-        <p>可以試著調整搜尋字詞、切換分類，或清除目前條件重新查看全部商品。</p>
+        <p>可以放寬搜尋條件，或重設目前篩選後再次瀏覽完整商品列表。</p>
         <button type="button" class="primary-button empty-action" @click="clearFilters">
-          清除條件並顯示全部商品
+          重設篩選
         </button>
       </div>
 
       <template v-else>
         <div class="catalog-status">
-          <p>共 {{ totalItems }} 件商品，目前第 {{ currentPage }} / {{ totalPages }} 頁</p>
-          <p>每頁顯示 {{ pageSize }} 件商品</p>
+          <p>共找到 {{ totalItems }} 件商品，目前第 {{ currentPage }} / {{ totalPages }} 頁。</p>
+          <p>每頁顯示 {{ pageSize }} 件商品。</p>
         </div>
 
         <div class="product-grid">
@@ -247,16 +263,21 @@ function handlePageChange(page: number, nextPageSize: number) {
                 <h3>{{ product.name }}</h3>
               </RouterLink>
               <p>{{ product.description }}</p>
+              <span v-if="hasProductVariants(product)" class="variant-badge"
+                >請至商品頁選擇規格</span
+              >
             </div>
             <div class="product-actions">
-              <RouterLink :to="`/products/${product.id}`" class="detail-link">查看詳情</RouterLink>
+              <RouterLink :to="`/products/${product.id}`" class="detail-link">查看商品</RouterLink>
 
               <div class="icon-actions">
                 <button
                   type="button"
                   class="wishlist-icon-button"
                   :class="{ active: isFavorited(product.id) }"
-                  :aria-label="isFavorited(product.id) ? `取消收藏 ${product.name}` : `收藏 ${product.name}`"
+                  :aria-label="
+                    isFavorited(product.id) ? `將 ${product.name} 移出收藏` : `收藏 ${product.name}`
+                  "
                   @click="toggleFavorite(product.id)"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -274,7 +295,11 @@ function handlePageChange(page: number, nextPageSize: number) {
                 <button
                   type="button"
                   class="cart-icon-button"
-                  :aria-label="`將 ${product.name} 加入購物車`"
+                  :aria-label="
+                    hasProductVariants(product)
+                      ? `為 ${product.name} 選擇規格`
+                      : `將 ${product.name} 加入購物車`
+                  "
                   @click="addToCart(product.id, product.name)"
                 >
                   <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -329,12 +354,17 @@ function handlePageChange(page: number, nextPageSize: number) {
   border-radius: 32px;
   background:
     radial-gradient(circle at top left, rgba(255, 255, 255, 0.7), transparent 36%),
-    linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(214, 158, 46, 0.1)),
-    var(--color-surface);
+    linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(214, 158, 46, 0.1)), var(--color-surface);
   box-shadow: var(--shadow-card);
 }
 
-.hero-copy h1,
+.hero-copy h1 {
+  margin-top: 0.45rem;
+  font-size: 3rem;
+  line-height: 0.98;
+  font-weight: 800;
+  color: var(--color-heading);
+}
 .section-heading h2 {
   margin-top: 0.45rem;
   font-size: clamp(2.4rem, 6vw, 4.75rem);
@@ -576,6 +606,19 @@ function handlePageChange(page: number, nextPageSize: number) {
 
 .product-copy p {
   color: var(--color-text-soft);
+}
+
+.variant-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  padding: 0.35rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.14);
+  color: #92400e;
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .product-actions {

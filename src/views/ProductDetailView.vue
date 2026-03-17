@@ -1,10 +1,19 @@
 <script setup lang="ts">
 import { computed, reactive, watch } from 'vue'
-import { storeToRefs } from 'pinia'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
+import {
+  findMatchingVariantCombination,
+  findProductById,
+  getRelatedProducts,
+  getProductVariantSelectionSummary,
+  hasProductVariants,
+  isProductVariantSelectionComplete,
+  isVariantValueAvailable,
+  parseProductId,
+  type ProductVariantSelection,
+} from '@/data/products'
 import { useAuthStore } from '@/stores/auth'
-import { findProductById, parseProductId } from '@/data/products'
 import { useCartStore } from '@/stores/cart'
 import { useProfileStore } from '@/stores/profile'
 import { useRecentlyViewedStore } from '@/stores/recentlyViewed'
@@ -22,26 +31,23 @@ const wishlistStore = useWishlistStore()
 const recentlyViewedStore = useRecentlyViewedStore()
 const reviewStore = useReviewStore()
 
-const { itemCount } = storeToRefs(cartStore)
-const { profile } = storeToRefs(profileStore)
-
 const reviewForm = reactive({
   rating: 5,
   content: '',
 })
 
-const currencyFormatter = new Intl.NumberFormat('zh-TW', {
+const variantSelection = reactive<ProductVariantSelection>({})
+
+const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
   maximumFractionDigits: 0,
 })
 
-const dateFormatter = new Intl.DateTimeFormat('zh-TW', {
+const dateFormatter = new Intl.DateTimeFormat('en-US', {
   year: 'numeric',
   month: 'long',
   day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
 })
 
 const productId = computed(() => parseProductId(route.params.productId))
@@ -49,15 +55,78 @@ const product = computed(() =>
   productId.value === null ? null : (findProductById(productId.value) ?? null),
 )
 
-const isFavorited = computed(() =>
-  product.value ? wishlistStore.isFavorited(product.value.id) : false,
+const variantOptionGroups = computed(() => product.value?.variants?.optionGroups ?? [])
+const relatedProducts = computed(() =>
+  product.value ? getRelatedProducts(product.value.id, 4) : [],
 )
-
 const productReviews = computed(() =>
   product.value ? reviewStore.getReviewsForProduct(product.value.id) : [],
 )
+const existingUserReview = computed(() => {
+  if (!product.value) {
+    return null
+  }
 
-const existingUserReview = computed(() => null)
+  const authorEmail = profileStore.profile.email.trim().toLowerCase()
+  return (
+    productReviews.value.find(
+      (review) => review.authorEmail.trim().toLowerCase() === authorEmail,
+    ) ?? null
+  )
+})
+
+const selectionState = computed(() => {
+  if (!product.value || !hasProductVariants(product.value)) {
+    return {
+      isComplete: true,
+      isValid: true,
+      message: 'This product is ready to add to cart.',
+
+      summary: [] as string[],
+    }
+  }
+
+  const complete = isProductVariantSelectionComplete(product.value, variantSelection)
+
+  if (!complete) {
+    return {
+      isComplete: false,
+      isValid: false,
+      message: '請先選擇所有必填規格，才能加入購物車。',
+      summary: getProductVariantSelectionSummary(product.value, variantSelection),
+    }
+  }
+
+  const matchingCombination = findMatchingVariantCombination(product.value, variantSelection)
+
+  if (!matchingCombination) {
+    return {
+      isComplete: true,
+      isValid: false,
+      message: '目前規格組合不可購買，請改選其他組合。',
+      summary: getProductVariantSelectionSummary(product.value, variantSelection),
+    }
+  }
+
+  return {
+    isComplete: true,
+    isValid: true,
+    message: '目前選擇的規格可加入購物車。',
+    summary: getProductVariantSelectionSummary(product.value, variantSelection),
+  }
+})
+
+const canAddToCart = computed(() => {
+  if (!product.value) {
+    return false
+  }
+
+  if (!hasProductVariants(product.value)) {
+    return true
+  }
+
+  return selectionState.value.isComplete && selectionState.value.isValid
+})
 
 const isReviewFormValid = computed(() => {
   const trimmedContent = reviewForm.content.trim()
@@ -72,6 +141,10 @@ const isReviewFormValid = computed(() => {
 watch(
   product,
   (nextProduct) => {
+    Object.keys(variantSelection).forEach((key) => {
+      delete variantSelection[key]
+    })
+
     if (!nextProduct) {
       return
     }
@@ -89,19 +162,57 @@ function formatDate(value: string) {
   return dateFormatter.format(new Date(value))
 }
 
-function addToCart(nextProductId: number, productName: string) {
-  cartStore.addItem(nextProductId)
-  uiStore.showSuccessToast(`${productName} 已加入購物車。`, '已加入購物車')
+function isFavorited(productId: number) {
+  return wishlistStore.isFavorited(productId)
 }
 
-function toggleFavorite(nextProductId: number) {
+function toggleFavorite(productId: number) {
   if (!authStore.isAuthenticated) {
-    uiStore.showWarningToast('登入後才能使用收藏功能，請先登入會員帳號。')
+    uiStore.showWarningToast('請先登入再收藏商品。')
     void router.push('/login')
     return
   }
 
-  wishlistStore.toggleFavorite(nextProductId)
+  const added = wishlistStore.toggleFavorite(productId)
+  uiStore.showSuccessToast(
+    added ? '已加入收藏清單。' : '已從收藏清單移除。',
+    added ? '收藏成功' : '已更新',
+  )
+}
+
+function chooseVariant(groupId: string, value: string) {
+  if (!product.value || !isVariantValueAvailable(product.value, groupId, value, variantSelection)) {
+    return
+  }
+
+  variantSelection[groupId] = value
+}
+
+function isVariantSelected(groupId: string, value: string) {
+  return variantSelection[groupId] === value
+}
+
+function isVariantDisabled(groupId: string, value: string) {
+  if (!product.value) {
+    return true
+  }
+
+  return !isVariantValueAvailable(product.value, groupId, value, variantSelection)
+}
+
+function addToCart() {
+  if (!product.value) {
+    return
+  }
+
+  const added = cartStore.addItem(product.value.id, variantSelection)
+
+  if (!added) {
+    uiStore.showWarningToast(selectionState.value.message)
+    return
+  }
+
+  uiStore.showSuccessToast(`${product.value.name} 已加入購物車。`, '加入成功')
 }
 
 function submitReview() {
@@ -110,30 +221,27 @@ function submitReview() {
   }
 
   if (!authStore.isAuthenticated) {
-    uiStore.showWarningToast('登入後才能提交商品評論，請先登入會員帳號。')
+    uiStore.showWarningToast('請先登入再留下評論。')
     void router.push('/login')
     return
   }
 
   if (!isReviewFormValid.value) {
-    uiStore.showWarningToast('請填寫 1 到 5 分評分，並輸入有效的評論內容。', '評論內容未完成')
+    uiStore.showWarningToast('請選擇 1 到 5 分，並輸入簡短評論內容。')
     return
   }
 
-  reviewStore.upsertReview({
+  reviewStore.createReview({
     productId: product.value.id,
-    authorName: profile.value.name,
-    authorEmail: profile.value.email,
+    authorName: profileStore.profile.name,
+    authorEmail: profileStore.profile.email,
     rating: reviewForm.rating,
     content: reviewForm.content,
   })
+
   reviewForm.rating = 5
   reviewForm.content = ''
-
-  uiStore.showSuccessToast(
-    existingUserReview.value ? '你的評論已更新。' : '你的評論已送出。',
-    existingUserReview.value ? '評論已更新' : '評論已送出',
-  )
+  uiStore.showSuccessToast('你的評論已顯示在這個商品頁面上。', '評論已送出')
 }
 </script>
 
@@ -145,54 +253,86 @@ function submitReview() {
       </div>
 
       <div class="detail-copy">
-        <RouterLink to="/" class="back-link">返回商品頁</RouterLink>
+        <RouterLink to="/" class="back-link">返回商店首頁</RouterLink>
         <p class="eyebrow">{{ product.category }}</p>
         <h1>{{ product.name }}</h1>
         <p class="price">{{ formatCurrency(product.price) }}</p>
         <p class="description">{{ product.description }}</p>
 
+        <section v-if="variantOptionGroups.length > 0" class="variant-card">
+          <div class="variant-header">
+            <div>
+              <p class="section-label">商品規格</p>
+              <h2>選擇你的商品配置</h2>
+            </div>
+            <span
+              class="availability-chip"
+              :class="{ ready: selectionState.isValid && selectionState.isComplete }"
+            >
+              {{ selectionState.isValid && selectionState.isComplete ? '可購買' : '尚未完成選擇' }}
+            </span>
+          </div>
+
+          <div class="variant-groups">
+            <div v-for="group in variantOptionGroups" :key="group.id" class="variant-group">
+              <div class="group-heading">
+                <strong>{{ group.label }}</strong>
+                <span>{{ variantSelection[group.id] ?? '請選擇' }}</span>
+              </div>
+
+              <div class="variant-values">
+                <button
+                  v-for="value in group.values"
+                  :key="value"
+                  type="button"
+                  class="variant-value"
+                  :class="{ selected: isVariantSelected(group.id, value) }"
+                  :disabled="isVariantDisabled(group.id, value)"
+                  @click="chooseVariant(group.id, value)"
+                >
+                  {{ value }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <p
+            class="selection-message"
+            :class="{ invalid: !selectionState.isValid || !selectionState.isComplete }"
+          >
+            {{ selectionState.message }}
+          </p>
+
+          <ul v-if="selectionState.summary.length > 0" class="selection-summary">
+            <li v-for="item in selectionState.summary" :key="item">{{ item }}</li>
+          </ul>
+        </section>
+
         <div class="detail-actions">
-          <RouterLink to="/cart" class="secondary-action">
-            前往購物車<span class="action-badge">{{ itemCount }}</span>
-          </RouterLink>
+          <button type="button" class="primary-action" :disabled="!canAddToCart" @click="addToCart">
+            加入購物車
+          </button>
 
           <div class="icon-actions">
+            <RouterLink to="/cart" class="secondary-action">查看購物車</RouterLink>
             <button
               type="button"
               class="icon-button wishlist-button"
-              :class="{ active: isFavorited }"
-              :aria-label="isFavorited ? `取消收藏 ${product.name}` : `收藏 ${product.name}`"
+              :class="{ active: isFavorited(product.id) }"
+              :aria-label="
+                isFavorited(product.id) ? `將 ${product.name} 移出收藏` : `收藏 ${product.name}`
+              "
               @click="toggleFavorite(product.id)"
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path
                   d="M12 20.25 4.8 13.41a4.52 4.52 0 0 1 0-6.48 4.73 4.73 0 0 1 6.6 0L12 7.51l.6-.58a4.73 4.73 0 0 1 6.6 0 4.52 4.52 0 0 1 0 6.48Z"
-                  :fill="isFavorited ? 'currentColor' : 'none'"
+                  :fill="isFavorited(product.id) ? 'currentColor' : 'none'"
                   stroke="currentColor"
                   stroke-linecap="round"
                   stroke-linejoin="round"
                   stroke-width="1.8"
                 />
-              </svg>
-            </button>
-
-            <button
-              type="button"
-              class="icon-button cart-button"
-              :aria-label="`將 ${product.name} 加入購物車`"
-              @click="addToCart(product.id, product.name)"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path
-                  d="M3 4.75h2.05l1.42 7.09a1 1 0 0 0 .98.8h8.77a1 1 0 0 0 .97-.76l1.58-6.38H7.24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  stroke-width="1.8"
-                />
-                <circle cx="10" cy="18.25" r="1.35" fill="currentColor" />
-                <circle cx="17" cy="18.25" r="1.35" fill="currentColor" />
               </svg>
             </button>
           </div>
@@ -200,12 +340,48 @@ function submitReview() {
       </div>
     </section>
 
+    <section v-if="product && relatedProducts.length > 0" class="related-products-shell">
+      <div class="related-products-header">
+        <div>
+          <p class="eyebrow">Related Products</p>
+          <h2>你可能也會喜歡</h2>
+          <p>看看同分類中的其他商品，延續你的瀏覽節奏。</p>
+        </div>
+      </div>
+
+      <div class="related-products-grid">
+        <article
+          v-for="relatedProduct in relatedProducts"
+          :key="relatedProduct.id"
+          class="related-product-card"
+        >
+          <RouterLink :to="`/products/${relatedProduct.id}`" class="related-product-image-link">
+            <img :src="relatedProduct.image" :alt="relatedProduct.name" />
+          </RouterLink>
+
+          <div class="related-product-copy">
+            <p class="related-product-category">{{ relatedProduct.category }}</p>
+            <RouterLink :to="`/products/${relatedProduct.id}`" class="related-product-title-link">
+              <h3>{{ relatedProduct.name }}</h3>
+            </RouterLink>
+            <p class="related-product-description">{{ relatedProduct.description }}</p>
+            <div class="related-product-footer">
+              <strong>{{ formatCurrency(relatedProduct.price) }}</strong>
+              <RouterLink :to="`/products/${relatedProduct.id}`" class="related-product-link">
+                查看商品
+              </RouterLink>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <section v-if="product" class="reviews-shell">
       <div class="reviews-header">
         <div>
-          <p class="eyebrow">Reviews</p>
-          <h2>商品評論</h2>
-          <p>看看其他會員對這項商品的看法，或留下你自己的使用心得。</p>
+          <p class="eyebrow">評論</p>
+          <h2>看看其他人怎麼說</h2>
+          <p>所有訪客都能閱讀評論，登入會員後也可以留下自己的使用心得。</p>
         </div>
         <span class="review-count">{{ productReviews.length }} 則評論</span>
       </div>
@@ -214,7 +390,7 @@ function submitReview() {
         <section class="review-form-card">
           <template v-if="authStore.isAuthenticated">
             <p class="section-label">
-              {{ existingUserReview ? '更新你的評論' : '撰寫評論' }}
+              {{ existingUserReview ? '再寫一則評論' : '留下評論' }}
             </p>
 
             <form class="review-form" @submit.prevent="submitReview">
@@ -228,19 +404,19 @@ function submitReview() {
                 <a-textarea
                   v-model:value="reviewForm.content"
                   :rows="5"
-                  placeholder="分享你對這項商品的看法與使用感受"
+                  placeholder="分享商品手感、使用方式或整體體驗。"
                 />
               </label>
 
               <button type="submit" class="primary-action" :disabled="!isReviewFormValid">
-                {{ existingUserReview ? '更新評論' : '送出評論' }}
+                送出評論
               </button>
             </form>
           </template>
 
           <template v-else>
-            <p class="section-label">登入後可提交評論</p>
-            <p class="signin-copy">你目前可以查看評論內容，登入後才能為這項商品留下評分與評論。</p>
+            <p class="section-label">登入後可評論</p>
+            <p class="signin-copy">你仍然可以先閱讀下方所有評論，想分享心得時再登入即可。</p>
             <RouterLink to="/login" class="secondary-action sign-in-link">前往登入</RouterLink>
           </template>
         </section>
@@ -250,7 +426,7 @@ function submitReview() {
 
           <div v-if="productReviews.length === 0" class="review-empty-state">
             <h3>目前還沒有評論</h3>
-            <p>成為第一位留下評分與評論的人，幫助其他使用者更快了解這項商品。</p>
+            <p>成為第一個分享這項商品外觀、手感與日常使用體驗的人吧。</p>
           </div>
 
           <div v-else class="review-list">
@@ -272,12 +448,12 @@ function submitReview() {
 
     <section v-else class="not-found-card">
       <p class="eyebrow">找不到商品</p>
-      <h1>這個商品可能不存在</h1>
-      <p>你可以返回商品頁重新挑選，或前往購物車查看目前已加入的商品。</p>
+      <h1>目前找不到這項商品。</h1>
+      <p>這個連結可能已失效，或商品已從目前的商店清單中移除。</p>
 
       <div class="not-found-actions">
-        <RouterLink to="/" class="primary-action">返回商品頁</RouterLink>
-        <RouterLink to="/cart" class="secondary-action">前往購物車</RouterLink>
+        <RouterLink to="/" class="primary-action">返回商店首頁</RouterLink>
+        <RouterLink to="/cart" class="secondary-action">開啟購物車</RouterLink>
       </div>
     </section>
   </main>
@@ -292,9 +468,11 @@ function submitReview() {
 
 .detail-shell,
 .reviews-shell,
+.related-products-shell,
 .not-found-card,
 .review-form-card,
-.review-list-card {
+.review-list-card,
+.variant-card {
   border: 1px solid var(--color-border);
   border-radius: 28px;
   background:
@@ -346,7 +524,8 @@ function submitReview() {
 
 .detail-copy h1,
 .not-found-card h1,
-.reviews-header h2 {
+.reviews-header h2,
+.variant-header h2 {
   color: var(--color-heading);
 }
 
@@ -357,9 +536,10 @@ function submitReview() {
   font-weight: 800;
 }
 
-.reviews-header h2 {
+.reviews-header h2,
+.variant-header h2 {
   margin-top: 0.35rem;
-  font-size: clamp(1.7rem, 4vw, 2.4rem);
+  font-size: clamp(1.5rem, 4vw, 2.2rem);
   font-weight: 800;
 }
 
@@ -375,9 +555,106 @@ function submitReview() {
 .signin-copy,
 .review-empty-state p,
 .review-content,
-.review-meta p {
+.review-meta p,
+.selection-message {
   color: var(--color-text-soft);
   font-size: 1rem;
+}
+
+.variant-card {
+  padding: 1.25rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.variant-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: start;
+}
+
+.availability-chip {
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.14);
+  color: #92400e;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.availability-chip.ready {
+  background: rgba(34, 197, 94, 0.16);
+  color: #166534;
+}
+
+.variant-groups {
+  display: grid;
+  gap: 1rem;
+}
+
+.variant-group {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.group-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  color: var(--color-heading);
+}
+
+.group-heading span {
+  color: var(--color-text-soft);
+}
+
+.variant-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.variant-value {
+  border: 1px solid var(--color-border);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--color-heading);
+  padding: 0.7rem 0.95rem;
+  border-radius: 999px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.variant-value.selected {
+  border-color: rgba(15, 118, 110, 0.32);
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--color-accent);
+}
+
+.variant-value:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.selection-message.invalid {
+  color: #b45309;
+}
+
+.selection-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.selection-summary li {
+  padding: 0.5rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--color-heading);
+  font-weight: 600;
 }
 
 .detail-actions,
@@ -387,7 +664,7 @@ function submitReview() {
   align-items: center;
   justify-content: space-between;
   gap: 0.85rem;
-  margin-top: 1rem;
+  margin-top: 0.35rem;
 }
 
 .icon-actions {
@@ -450,30 +727,100 @@ function submitReview() {
   color: #dc2626;
 }
 
-.cart-button {
-  border: 1px solid rgba(34, 197, 94, 0.24);
-  background: #22c55e;
-  color: #f7fbfc;
-  box-shadow: 0 0.75rem 1.5rem rgba(34, 197, 94, 0.24);
-}
-
 .icon-button svg {
   width: 1.3rem;
   height: 1.3rem;
 }
 
-.action-badge {
+.related-products-shell {
+  display: grid;
+  gap: 1.25rem;
+  padding: 1.5rem;
+}
+
+.related-products-header h2 {
+  margin-top: 0.35rem;
+  color: var(--color-heading);
+  font-size: clamp(1.6rem, 4vw, 2.3rem);
+  font-weight: 800;
+}
+
+.related-products-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.related-product-card {
+  display: grid;
+  border: 1px solid var(--color-border);
+  border-radius: 24px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.related-product-image-link {
+  display: block;
+  aspect-ratio: 1.1;
+  overflow: hidden;
+}
+
+.related-product-card img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.related-product-copy {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.related-product-category {
+  color: var(--color-accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.related-product-title-link {
+  color: inherit;
+}
+
+.related-product-title-link h3 {
+  color: var(--color-heading);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.related-product-description {
+  color: var(--color-text-soft);
+  min-height: 4.5rem;
+}
+
+.related-product-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.related-product-footer strong {
+  color: var(--color-heading);
+}
+
+.related-product-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 1.4rem;
-  height: 1.4rem;
-  padding: 0 0.3rem;
+  padding: 0.7rem 0.95rem;
   border-radius: 999px;
-  background: rgba(15, 118, 110, 0.12);
+  background: rgba(15, 118, 110, 0.08);
   color: var(--color-accent);
-  font-size: 0.78rem;
-  font-weight: 800;
+  font-weight: 700;
 }
 
 .reviews-shell {
@@ -506,11 +853,6 @@ function submitReview() {
 .review-form-card,
 .review-list-card {
   padding: 1.5rem;
-}
-
-.review-form-card .section-label,
-.review-list-card .section-label {
-  white-space: nowrap;
 }
 
 .review-form,
@@ -590,6 +932,7 @@ function submitReview() {
 
 @media (max-width: 960px) {
   .detail-shell,
+  .related-products-grid,
   .reviews-layout {
     grid-template-columns: 1fr;
   }
@@ -600,8 +943,11 @@ function submitReview() {
 
   .detail-actions,
   .reviews-header,
-  .review-meta {
+  .review-meta,
+  .variant-header,
+  .group-heading {
     align-items: stretch;
+    flex-direction: column;
   }
 }
 </style>

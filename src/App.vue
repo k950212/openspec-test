@@ -35,7 +35,7 @@ function handleLogout() {
     <header class="app-header">
       <RouterLink to="/" class="brand">
         <span class="brand-mark">Atelier</span>
-        <span class="brand-copy">Curated Everyday Objects</span>
+        <span class="brand-copy">精選日常物品</span>
       </RouterLink>
 
       <nav class="app-nav">

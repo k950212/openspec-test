@@ -13,7 +13,7 @@ const { detailedItems, subtotal } = storeToRefs(cartStore)
 const shipping = computed(() => (detailedItems.value.length > 0 ? 12 : 0))
 const total = computed(() => subtotal.value + shipping.value)
 
-const currencyFormatter = new Intl.NumberFormat('zh-TW', {
+const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
   currency: 'USD',
   maximumFractionDigits: 0,
@@ -23,13 +23,13 @@ function formatCurrency(value: number) {
   return currencyFormatter.format(value)
 }
 
-function removeFromCart(productId: number, productName: string) {
-  cartStore.removeItem(productId)
+function removeFromCart(itemKey: string, productName: string) {
+  cartStore.removeItem(itemKey)
   uiStore.showRemovalToast(`${productName} 已從購物車移除。`)
 }
 
-function decrementItem(productId: number, productName: string, quantity: number) {
-  cartStore.decrementItem(productId)
+function decrementItem(itemKey: string, productName: string, quantity: number) {
+  cartStore.decrementItem(itemKey)
 
   if (quantity === 1) {
     uiStore.showRemovalToast(`${productName} 已從購物車移除。`)
@@ -41,25 +41,28 @@ function decrementItem(productId: number, productName: string, quantity: number)
   <main class="cart-page">
     <section class="cart-panel">
       <div class="section-heading">
-        <p class="eyebrow">Cart</p>
-        <h1>檢視你的購物車內容</h1>
-        <p>確認商品、數量與金額後，就可以前往結帳完成本次訂單。</p>
+        <p class="eyebrow">購物車</p>
+        <h1>目前已選擇的商品</h1>
+        <p>你可以在這裡確認數量、比較規格選擇，準備好後再前往結帳。</p>
       </div>
 
       <div v-if="detailedItems.length === 0" class="empty-state">
         <h2>購物車目前是空的</h2>
-        <p>先回到商品頁挑選喜歡的商品，之後再回來確認訂單內容。</p>
-        <RouterLink to="/" class="link-button">返回商品頁</RouterLink>
+        <p>回到商店首頁逛逛，將適合你的商品加入購物車吧。</p>
+        <RouterLink to="/" class="link-button">返回商店首頁</RouterLink>
       </div>
 
       <div v-else class="cart-layout">
         <section class="cart-list">
-          <article v-for="item in detailedItems" :key="item.productId" class="cart-item">
+          <article v-for="item in detailedItems" :key="item.itemKey" class="cart-item">
             <img :src="item.product.image" :alt="item.product.name" />
             <div class="item-copy">
               <p class="item-category">{{ item.product.category }}</p>
               <h2>{{ item.product.name }}</h2>
               <p>{{ item.product.description }}</p>
+              <ul v-if="item.variantSummary.length > 0" class="variant-summary">
+                <li v-for="summary in item.variantSummary" :key="summary">{{ summary }}</li>
+              </ul>
               <p class="item-price">{{ formatCurrency(item.product.price) }}</p>
             </div>
 
@@ -67,19 +70,19 @@ function decrementItem(productId: number, productName: string, quantity: number)
               <div class="quantity-control">
                 <button
                   type="button"
-                  @click="decrementItem(item.productId, item.product.name, item.quantity)"
+                  @click="decrementItem(item.itemKey, item.product.name, item.quantity)"
                 >
                   -
                 </button>
                 <span>{{ item.quantity }}</span>
-                <button type="button" @click="cartStore.incrementItem(item.productId)">+</button>
+                <button type="button" @click="cartStore.incrementItem(item.itemKey)">+</button>
               </div>
 
               <p class="line-total">{{ formatCurrency(item.lineTotal) }}</p>
               <button
                 type="button"
                 class="remove-button"
-                @click="removeFromCart(item.productId, item.product.name)"
+                @click="removeFromCart(item.itemKey, item.product.name)"
               >
                 移除
               </button>
@@ -211,9 +214,27 @@ function decrementItem(productId: number, productName: string, quantity: number)
   color: var(--color-text-soft);
 }
 
+.variant-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.variant-summary li {
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--color-heading);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
 .item-price,
 .line-total {
-  color: var(--color-heading);
+  color: var(--color-heading) !important;
   font-weight: 700;
 }
 
