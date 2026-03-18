@@ -584,6 +584,13 @@ function isImageFailed(imageUrl: string) {
           class="related-product-card"
         >
           <RouterLink :to="`/products/${relatedProduct.id}`" class="related-product-image-link">
+            <span
+              v-if="relatedProduct.saleBadge"
+              class="sale-badge"
+              :class="`sale-badge-${relatedProduct.saleBadge.variant ?? 'sale'}`"
+            >
+              {{ relatedProduct.saleBadge.label }}
+            </span>
             <img :src="relatedProduct.image" :alt="relatedProduct.name" />
           </RouterLink>
 
@@ -1164,6 +1171,7 @@ function isImageFailed(imageUrl: string) {
   display: block;
   aspect-ratio: 1.1;
   overflow: hidden;
+  position: relative;
 }
 
 .related-product-card img {
@@ -1199,7 +1207,42 @@ function isImageFailed(imageUrl: string) {
 
 .related-product-description {
   color: var(--color-text-soft);
-  min-height: 4.5rem;
+  min-height: 3rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sale-badge {
+  position: absolute;
+  top: 0.9rem;
+  left: 0.9rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: calc(100% - 1.8rem);
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  color: #fff7ed;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.sale-badge-sale {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.96), rgba(249, 115, 22, 0.92));
+}
+
+.sale-badge-limited {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(8, 145, 178, 0.92));
+}
+
+.sale-badge-new {
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.94), rgba(16, 185, 129, 0.9));
 }
 
 .related-product-footer {

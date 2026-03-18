@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterLink, useRouter } from 'vue-router'
 
-import { hasProductVariants, products } from '@/data/products'
+import { getBaseProductGallery, hasProductVariants, products, type Product } from '@/data/products'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 import { useUiStore } from '@/stores/ui'
@@ -25,6 +25,10 @@ const { itemCount } = storeToRefs(cartStore)
 const searchQuery = ref('')
 const selectedCategory = ref(ALL_CATEGORY)
 const selectedSort = ref<SortOption>('default')
+const minPrice = ref('')
+const maxPrice = ref('')
+const quickViewProduct = ref<Product | null>(null)
+const isQuickViewOpen = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(6)
 const isCatalogLoading = ref(true)
@@ -48,6 +52,29 @@ const sortOptions = [
 ]
 
 const normalizedQuery = computed(() => searchQuery.value.trim().toLowerCase())
+const normalizedMinPrice = computed(() => parsePriceInput(minPrice.value))
+const normalizedMaxPrice = computed(() => parsePriceInput(maxPrice.value))
+const hasActivePriceRange = computed(
+  () => normalizedMinPrice.value !== null || normalizedMaxPrice.value !== null,
+)
+const isPriceRangeInvalid = computed(
+  () =>
+    normalizedMinPrice.value !== null &&
+    normalizedMaxPrice.value !== null &&
+    normalizedMinPrice.value > normalizedMaxPrice.value,
+)
+const activePriceRangeSummary = computed(() => {
+  if (!hasActivePriceRange.value || isPriceRangeInvalid.value) {
+    return ''
+  }
+
+  const minimumLabel =
+    normalizedMinPrice.value === null ? '不限' : formatCurrency(normalizedMinPrice.value)
+  const maximumLabel =
+    normalizedMaxPrice.value === null ? '不限' : formatCurrency(normalizedMaxPrice.value)
+
+  return `${minimumLabel} - ${maximumLabel}`
+})
 
 const filteredProducts = computed(() => {
   const matches = products.filter((product) => {
@@ -61,7 +88,16 @@ const filteredProducts = computed(() => {
     const matchesQuery =
       normalizedQuery.value.length === 0 || searchableText.includes(normalizedQuery.value)
 
-    return matchesCategory && matchesQuery
+    const matchesMinPrice =
+      isPriceRangeInvalid.value ||
+      normalizedMinPrice.value === null ||
+      product.price >= normalizedMinPrice.value
+    const matchesMaxPrice =
+      isPriceRangeInvalid.value ||
+      normalizedMaxPrice.value === null ||
+      product.price <= normalizedMaxPrice.value
+
+    return matchesCategory && matchesQuery && matchesMinPrice && matchesMaxPrice
   })
 
   if (selectedSort.value === 'price-asc') {
@@ -93,9 +129,32 @@ const paginatedProducts = computed(() => {
 const hasCatalogProducts = computed(() => products.length > 0)
 const minimumPageSize = Number(PAGE_SIZE_OPTIONS[0])
 const showPagination = computed(() => totalItems.value > minimumPageSize)
+const isPriceFilteredEmptyState = computed(
+  () =>
+    filteredProducts.value.length === 0 &&
+    hasActivePriceRange.value &&
+    !isPriceRangeInvalid.value,
+)
+const quickViewImages = computed(() =>
+  quickViewProduct.value ? getBaseProductGallery(quickViewProduct.value) : [],
+)
+const quickViewPrimaryImage = computed(() => quickViewImages.value[0] ?? '')
+const quickViewActionLabel = computed(() => {
+  if (!quickViewProduct.value) {
+    return '加入購物車'
+  }
 
-watch([searchQuery, selectedCategory], () => {
+  return hasProductVariants(quickViewProduct.value) ? '前往選擇規格' : '加入購物車'
+})
+
+watch([searchQuery, selectedCategory, selectedSort, minPrice, maxPrice], () => {
   currentPage.value = 1
+})
+
+watch(isPriceRangeInvalid, (isInvalid, wasInvalid) => {
+  if (isInvalid && !wasInvalid) {
+    uiStore.showWarningToast('最低價格不能高於最高價格。請重新調整價格區間。', '價格區間無效')
+  }
 })
 
 watch(totalPages, (nextTotalPages) => {
@@ -117,12 +176,15 @@ const currencyFormatter = new Intl.NumberFormat('en-US', {
 
 onMounted(() => {
   startCatalogLoading()
+  window.addEventListener('keydown', handleQuickViewKeydown)
 })
 
 onBeforeUnmount(() => {
   if (catalogLoadTimer !== undefined) {
     window.clearTimeout(catalogLoadTimer)
   }
+
+  window.removeEventListener('keydown', handleQuickViewKeydown)
 })
 
 function startCatalogLoading() {
@@ -141,6 +203,22 @@ function formatCurrency(value: number) {
   return currencyFormatter.format(value)
 }
 
+function parsePriceInput(value: string) {
+  const trimmedValue = value.trim()
+
+  if (trimmedValue.length === 0) {
+    return null
+  }
+
+  const parsedValue = Number(trimmedValue)
+
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    return null
+  }
+
+  return parsedValue
+}
+
 function addToCart(productId: number, productName: string) {
   const product = products.find((entry) => entry.id === productId)
 
@@ -156,6 +234,42 @@ function addToCart(productId: number, productName: string) {
 
   cartStore.addItem(productId)
   uiStore.showSuccessToast(`${productName} 已加入購物車。`, '加入成功')
+}
+
+function openQuickView(product: Product) {
+  quickViewProduct.value = product
+  isQuickViewOpen.value = true
+}
+
+function closeQuickView() {
+  isQuickViewOpen.value = false
+  quickViewProduct.value = null
+}
+
+function handleQuickViewKeydown(event: KeyboardEvent) {
+  if (event.key === 'Escape' && isQuickViewOpen.value) {
+    closeQuickView()
+  }
+}
+
+function openQuickViewDetail() {
+  if (!quickViewProduct.value) {
+    return
+  }
+
+  const productId = quickViewProduct.value.id
+  closeQuickView()
+  void router.push(`/products/${productId}`)
+}
+
+function handleQuickViewPrimaryAction() {
+  if (!quickViewProduct.value) {
+    return
+  }
+
+  const { id, name } = quickViewProduct.value
+  closeQuickView()
+  addToCart(id, name)
 }
 
 function toggleFavorite(productId: number) {
@@ -180,8 +294,14 @@ function clearFilters() {
   searchQuery.value = ''
   selectedCategory.value = ALL_CATEGORY
   selectedSort.value = 'default'
+  clearPriceRange()
   currentPage.value = 1
   pageSize.value = 6
+}
+
+function clearPriceRange() {
+  minPrice.value = ''
+  maxPrice.value = ''
 }
 
 function handlePageChange(page: number, nextPageSize: number) {
@@ -254,7 +374,40 @@ function handlePageChange(page: number, nextPageSize: number) {
           <a-select v-model:value="selectedSort" :options="sortOptions" class="toolbar-select" />
         </label>
 
-        <button type="button" class="clear-button" @click="clearFilters">清除篩選</button>
+        <label class="price-range-field">
+          <span>價格區間</span>
+          <div class="price-range-inputs">
+            <a-input
+              v-model:value="minPrice"
+              type="number"
+              inputmode="numeric"
+              min="0"
+              placeholder="最低價"
+              size="large"
+            />
+            <span class="price-range-separator">至</span>
+            <a-input
+              v-model:value="maxPrice"
+              type="number"
+              inputmode="numeric"
+              min="0"
+              placeholder="最高價"
+              size="large"
+            />
+          </div>
+        </label>
+
+        <div class="toolbar-actions">
+          <button
+            type="button"
+            class="secondary-button"
+            :disabled="!hasActivePriceRange"
+            @click="clearPriceRange"
+          >
+            清除價格區間
+          </button>
+          <button type="button" class="clear-button" @click="clearFilters">清除篩選</button>
+        </div>
       </div>
 
       <div v-if="!hasCatalogProducts" class="empty-state">
@@ -289,22 +442,45 @@ function handlePageChange(page: number, nextPageSize: number) {
       </template>
 
       <div v-else-if="filteredProducts.length === 0" class="empty-state">
-        <h3>找不到符合條件的商品</h3>
-        <p>你可以調整搜尋關鍵字、切換分類，或清除目前篩選後重新瀏覽完整商品列表。</p>
-        <button type="button" class="primary-button empty-action" @click="clearFilters">
-          重設篩選
-        </button>
+        <template v-if="isPriceFilteredEmptyState">
+          <h3>目前沒有商品落在這個價格區間</h3>
+          <p>你可以放寬最低價或最高價，或直接清除價格區間後重新查看完整商品列表。</p>
+          <button type="button" class="primary-button empty-action" @click="clearPriceRange">
+            清除價格區間
+          </button>
+        </template>
+
+        <template v-else>
+          <h3>找不到符合條件的商品</h3>
+          <p>你可以調整搜尋關鍵字、切換分類，或清除目前篩選後重新瀏覽完整商品列表。</p>
+          <button type="button" class="primary-button empty-action" @click="clearFilters">
+            重設篩選
+          </button>
+        </template>
       </div>
 
       <template v-else>
         <div class="catalog-status">
           <p>共找到 {{ totalItems }} 件商品，目前第 {{ currentPage }} / {{ totalPages }} 頁。</p>
-          <p>每頁顯示 {{ pageSize }} 件商品。</p>
+          <p>
+            每頁顯示 {{ pageSize }} 件商品
+            <template v-if="hasActivePriceRange && !isPriceRangeInvalid">
+              ，目前價格區間為 {{ activePriceRangeSummary }}
+            </template>
+            。
+          </p>
         </div>
 
         <div class="product-grid">
           <article v-for="product in paginatedProducts" :key="product.id" class="product-card">
             <RouterLink :to="`/products/${product.id}`" class="product-image-link">
+              <span
+                v-if="product.saleBadge"
+                class="sale-badge"
+                :class="`sale-badge-${product.saleBadge.variant ?? 'sale'}`"
+              >
+                {{ product.saleBadge.label }}
+              </span>
               <img :src="product.image" :alt="product.name" />
             </RouterLink>
             <div class="product-copy">
@@ -319,7 +495,12 @@ function handlePageChange(page: number, nextPageSize: number) {
               <span v-if="hasProductVariants(product)" class="variant-badge">請先到商品頁選擇規格</span>
             </div>
             <div class="product-actions">
-              <RouterLink :to="`/products/${product.id}`" class="detail-link">查看商品</RouterLink>
+              <div class="card-link-group">
+                <button type="button" class="quick-view-button" @click="openQuickView(product)">
+                  快速預覽
+                </button>
+                <RouterLink :to="`/products/${product.id}`" class="detail-link">查看商品</RouterLink>
+              </div>
 
               <div class="icon-actions">
                 <button
@@ -380,6 +561,70 @@ function handlePageChange(page: number, nextPageSize: number) {
         </div>
       </template>
     </section>
+
+    <teleport to="body">
+      <div v-if="isQuickViewOpen && quickViewProduct" class="quick-view-modal" @click.self="closeQuickView">
+        <div
+          class="quick-view-dialog"
+          role="dialog"
+          aria-modal="true"
+          :aria-label="`${quickViewProduct.name} 快速預覽`"
+        >
+          <button type="button" class="quick-view-close" @click="closeQuickView">關閉</button>
+
+          <div class="quick-view-layout">
+            <div class="quick-view-media">
+              <span
+                v-if="quickViewProduct.saleBadge"
+                class="sale-badge"
+                :class="`sale-badge-${quickViewProduct.saleBadge.variant ?? 'sale'}`"
+              >
+                {{ quickViewProduct.saleBadge.label }}
+              </span>
+              <img
+                v-if="quickViewPrimaryImage"
+                :src="quickViewPrimaryImage"
+                :alt="quickViewProduct.name"
+              />
+              <div v-else class="quick-view-image-fallback">
+                <strong>目前沒有可顯示的商品圖片</strong>
+                <p>你仍然可以查看商品資訊，或前往商品頁查看更多內容。</p>
+              </div>
+
+              <p v-if="quickViewImages.length > 1" class="quick-view-gallery-note">
+                此商品目前有 {{ quickViewImages.length }} 張圖片可於商品頁查看。
+              </p>
+            </div>
+
+            <div class="quick-view-copy">
+              <p class="eyebrow">Quick View</p>
+              <div class="quick-view-heading">
+                <span>{{ quickViewProduct.category }}</span>
+                <strong>{{ formatCurrency(quickViewProduct.price) }}</strong>
+              </div>
+              <h3>{{ quickViewProduct.name }}</h3>
+              <p>{{ quickViewProduct.description }}</p>
+              <span v-if="hasProductVariants(quickViewProduct)" class="variant-badge">
+                此商品需要先在商品頁選擇規格
+              </span>
+
+              <div class="quick-view-actions">
+                <button type="button" class="primary-button" @click="handleQuickViewPrimaryAction">
+                  {{ quickViewActionLabel }}
+                </button>
+                <button
+                  type="button"
+                  class="secondary-button quick-view-detail-button"
+                  @click="openQuickViewDetail"
+                >
+                  前往商品詳情
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </teleport>
   </main>
 </template>
 
@@ -486,6 +731,10 @@ function handlePageChange(page: number, nextPageSize: number) {
   display: block;
 }
 
+.product-image-link {
+  position: relative;
+}
+
 .highlight-card img {
   width: 100%;
   height: 100%;
@@ -530,13 +779,14 @@ function handlePageChange(page: number, nextPageSize: number) {
 
 .catalog-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(12rem, 1fr)) auto;
+  grid-template-columns: minmax(0, 2fr) repeat(2, minmax(10rem, 1fr)) minmax(0, 1.45fr) auto;
   gap: 1rem;
   padding: 1rem;
 }
 
 .search-field,
-.filter-field {
+.filter-field,
+.price-range-field {
   display: grid;
   gap: 0.45rem;
 }
@@ -546,6 +796,7 @@ function handlePageChange(page: number, nextPageSize: number) {
 }
 
 :deep(.search-field .ant-input),
+:deep(.price-range-inputs .ant-input),
 :deep(.toolbar-select .ant-select-selector) {
   min-height: 52px;
   border-radius: 16px !important;
@@ -559,21 +810,53 @@ function handlePageChange(page: number, nextPageSize: number) {
   color: var(--color-heading);
 }
 
+.price-range-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.price-range-separator {
+  color: var(--color-text-soft);
+  font-weight: 700;
+}
+
 :deep(.toolbar-select .ant-select-selection-item),
 :deep(.toolbar-select .ant-select-selection-placeholder) {
   line-height: 50px !important;
   color: var(--color-heading);
 }
 
+.toolbar-actions {
+  display: flex;
+  align-items: end;
+  gap: 0.75rem;
+}
+
+.secondary-button,
 .clear-button {
-  align-self: end;
   border: 0;
   border-radius: 999px;
   padding: 0.85rem 1rem;
-  background: rgba(15, 118, 110, 0.08);
-  color: var(--color-accent);
   font-weight: 700;
   cursor: pointer;
+}
+
+.secondary-button {
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--color-accent);
+}
+
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.clear-button {
+  align-self: end;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--color-accent);
 }
 
 .catalog-status {
@@ -616,6 +899,121 @@ function handlePageChange(page: number, nextPageSize: number) {
   margin-top: 0.4rem;
 }
 
+.quick-view-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: start center;
+  padding: 1.5rem;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(10px);
+  overflow-y: auto;
+}
+
+.quick-view-dialog {
+  width: min(100%, 56rem);
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem;
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 2rem 4rem rgba(15, 23, 42, 0.26);
+  margin: auto 0;
+}
+
+.quick-view-close {
+  justify-self: end;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.7rem 1rem;
+  background: rgba(15, 118, 110, 0.08);
+  color: var(--color-accent);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.quick-view-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1.25rem;
+}
+
+.quick-view-media,
+.quick-view-copy {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.quick-view-media {
+  position: relative;
+}
+
+.quick-view-media img,
+.quick-view-image-fallback {
+  width: 100%;
+  min-height: 18rem;
+  border-radius: 24px;
+  border: 1px solid var(--color-border);
+  background: rgba(248, 250, 252, 0.9);
+}
+
+.quick-view-media img {
+  object-fit: cover;
+}
+
+.quick-view-image-fallback {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  padding: 1.5rem;
+  text-align: center;
+}
+
+.quick-view-image-fallback p,
+.quick-view-gallery-note,
+.quick-view-copy p {
+  color: var(--color-text-soft);
+}
+
+.quick-view-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.quick-view-heading span {
+  color: var(--color-accent);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.quick-view-heading strong {
+  color: var(--color-heading);
+  font-size: 1.2rem;
+}
+
+.quick-view-copy h3 {
+  margin: 0;
+  color: var(--color-heading);
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  line-height: 1;
+}
+
+.quick-view-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+}
+
+.quick-view-detail-button {
+  background: rgba(15, 118, 110, 0.08);
+}
+
 .product-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -651,6 +1049,11 @@ function handlePageChange(page: number, nextPageSize: number) {
 
 .product-copy p {
   color: var(--color-text-soft);
+  min-height: 3rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .variant-badge {
@@ -666,6 +1069,37 @@ function handlePageChange(page: number, nextPageSize: number) {
   font-weight: 700;
 }
 
+.sale-badge {
+  position: absolute;
+  top: 0.9rem;
+  left: 0.9rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: calc(100% - 1.8rem);
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  color: #fff7ed;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.sale-badge-sale {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.96), rgba(249, 115, 22, 0.92));
+}
+
+.sale-badge-limited {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(8, 145, 178, 0.92));
+}
+
+.sale-badge-new {
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.94), rgba(16, 185, 129, 0.9));
+}
+
 .product-actions {
   display: flex;
   align-items: center;
@@ -674,15 +1108,31 @@ function handlePageChange(page: number, nextPageSize: number) {
   padding: 1rem;
 }
 
+.card-link-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.quick-view-button,
 .detail-link {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
   padding: 0.8rem 1rem;
-  background: rgba(15, 118, 110, 0.08);
   color: var(--color-accent);
   font-weight: 700;
+}
+
+.quick-view-button {
+  border: 1px solid rgba(15, 118, 110, 0.18);
+  background: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+}
+
+.detail-link {
+  background: rgba(15, 118, 110, 0.08);
 }
 
 .icon-actions {
@@ -854,10 +1304,12 @@ function handlePageChange(page: number, nextPageSize: number) {
 
 @media (max-width: 1100px) {
   .catalog-toolbar {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .search-field {
+  .search-field,
+  .price-range-field,
+  .toolbar-actions {
     grid-column: 1 / -1;
   }
 }
@@ -872,11 +1324,47 @@ function handlePageChange(page: number, nextPageSize: number) {
     flex-direction: column;
     align-items: stretch;
   }
+
+  .toolbar-actions {
+    flex-wrap: wrap;
+  }
+
+  .quick-view-layout {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 700px) {
   .catalog-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .price-range-inputs {
+    grid-template-columns: 1fr;
+  }
+
+  .price-range-separator {
+    justify-self: center;
+  }
+
+  .toolbar-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .product-actions,
+  .quick-view-actions,
+  .card-link-group {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .quick-view-modal {
+    padding: 1rem;
+  }
+
+  .quick-view-dialog {
+    padding: 1rem;
   }
 }
 </style>

@@ -40,6 +40,13 @@ function removeFavorite(productId: number) {
       <div v-else class="wishlist-grid">
         <article v-for="product in favoritedProducts" :key="product.id" class="wishlist-card">
           <RouterLink :to="`/products/${product.id}`" class="wishlist-image-link">
+            <span
+              v-if="product.saleBadge"
+              class="sale-badge"
+              :class="`sale-badge-${product.saleBadge.variant ?? 'sale'}`"
+            >
+              {{ product.saleBadge.label }}
+            </span>
             <img :src="product.image" :alt="product.name" />
           </RouterLink>
 
@@ -134,6 +141,11 @@ function removeFavorite(productId: number) {
   object-fit: cover;
 }
 
+.wishlist-image-link {
+  position: relative;
+  display: block;
+}
+
 .wishlist-copy {
   display: grid;
   gap: 0.75rem;
@@ -166,6 +178,42 @@ function removeFavorite(productId: number) {
 
 .wishlist-copy p {
   color: var(--color-text-soft);
+  min-height: 3rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.sale-badge {
+  position: absolute;
+  top: 0.9rem;
+  left: 0.9rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: calc(100% - 1.8rem);
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  color: #fff7ed;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.18);
+  backdrop-filter: blur(8px);
+}
+
+.sale-badge-sale {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.96), rgba(249, 115, 22, 0.92));
+}
+
+.sale-badge-limited {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(8, 145, 178, 0.92));
+}
+
+.sale-badge-new {
+  background: linear-gradient(135deg, rgba(5, 150, 105, 0.94), rgba(16, 185, 129, 0.9));
 }
 
 .wishlist-actions {

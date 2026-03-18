@@ -1,4 +1,10 @@
 export type ProductVariantSelection = Record<string, string>
+export type ProductSaleBadgeVariant = 'sale' | 'limited' | 'new'
+
+export type ProductSaleBadge = {
+  label: string
+  variant?: ProductSaleBadgeVariant
+}
 
 export type ProductVariantOptionGroup = {
   id: string
@@ -24,6 +30,7 @@ export type Product = {
   category: string
   description: string
   image: string
+  saleBadge?: ProductSaleBadge
   gallery?: string[]
   variants?: ProductVariants
 }
@@ -35,6 +42,7 @@ export const products: Product[] = [
     price: 84,
     category: '鞋履',
     description: '適合日常通勤與輕量步行的低筒跑鞋，鞋面透氣、輪廓俐落。',
+    saleBadge: { label: '限時 85 折', variant: 'sale' },
     image:
       'https://images.unsplash.com/photo-1542291026-7eec264c27ff?auto=format&fit=crop&w=900&q=80',
     gallery: [
@@ -111,6 +119,7 @@ export const products: Product[] = [
     price: 36,
     category: '咖啡',
     description: '為手沖與濾杯沖煮設計的日常配豆，帶有柔和果香與乾淨尾韻。',
+    saleBadge: { label: '本週熱賣', variant: 'limited' },
     image:
       'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=900&q=80',
     gallery: [
@@ -222,6 +231,7 @@ export const products: Product[] = [
     price: 28,
     category: '家飾',
     description: '霧面質地花器，適合單枝花材或乾燥花擺設。',
+    saleBadge: { label: '新品上架', variant: 'new' },
     image:
       'https://images.unsplash.com/photo-1485955900006-10f4d324d411?auto=format&fit=crop&w=900&q=80',
     gallery: [
@@ -333,6 +343,7 @@ export const products: Product[] = [
     price: 93,
     category: '音訊',
     description: '封閉式耳罩搭配柔軟耳墊，適合工作與沉浸式聆聽。',
+    saleBadge: { label: '會員加碼', variant: 'sale' },
     image:
       'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=900&q=80',
     gallery: [
@@ -391,6 +402,7 @@ export const products: Product[] = [
     price: 120,
     category: '家具',
     description: '寬坐面與柔和線條兼具，適合客廳作為核心家具。',
+    saleBadge: { label: '限量優惠', variant: 'limited' },
     image:
       'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=900&q=80',
     gallery: [
@@ -467,6 +479,7 @@ export const products: Product[] = [
     price: 42,
     category: '咖啡',
     description: '讓水流更穩定的濾杯輪廓，適合日常手沖練習。',
+    saleBadge: { label: '新品入庫', variant: 'new' },
     image:
       'https://images.unsplash.com/photo-1511920170033-f8396924c348?auto=format&fit=crop&w=900&q=80',
   },
