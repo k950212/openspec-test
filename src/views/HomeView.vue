@@ -3,13 +3,25 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { RouterLink, useRouter } from 'vue-router'
 
-import { getBaseProductGallery, hasProductVariants, products, type Product } from '@/data/products'
+import {
+  getBaseProductGallery,
+  getProductPopularityScore,
+  hasProductVariants,
+  products,
+  type Product,
+} from '@/data/products'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 import { useUiStore } from '@/stores/ui'
 import { useWishlistStore } from '@/stores/wishlist'
 
-type SortOption = 'default' | 'price-asc' | 'price-desc'
+type SortOption =
+  | 'default'
+  | 'popular'
+  | 'newest'
+  | 'oldest'
+  | 'price-asc'
+  | 'price-desc'
 
 const PAGE_SIZE_OPTIONS = ['6', '12', '18']
 const ALL_CATEGORY = '全部分類'
@@ -47,6 +59,9 @@ const categoryOptions = computed(() =>
 
 const sortOptions = [
   { label: '預設排序', value: 'default' as const },
+  { label: '熱門優先', value: 'popular' as const },
+  { label: '最新優先', value: 'newest' as const },
+  { label: '最舊優先', value: 'oldest' as const },
   { label: '價格：低到高', value: 'price-asc' as const },
   { label: '價格：高到低', value: 'price-desc' as const },
 ]
@@ -106,6 +121,20 @@ const filteredProducts = computed(() => {
 
   if (selectedSort.value === 'price-desc') {
     return [...matches].sort((left, right) => right.price - left.price)
+  }
+
+  if (selectedSort.value === 'newest') {
+    return [...matches].sort((left, right) => right.id - left.id)
+  }
+
+  if (selectedSort.value === 'oldest') {
+    return [...matches].sort((left, right) => left.id - right.id)
+  }
+
+  if (selectedSort.value === 'popular') {
+    return [...matches].sort(
+      (left, right) => getProductPopularityScore(right) - getProductPopularityScore(left),
+    )
   }
 
   return matches

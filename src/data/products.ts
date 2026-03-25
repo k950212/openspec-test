@@ -697,6 +697,16 @@ export function getProductGallery(product: Product, selection: ProductVariantSel
   return getBaseProductGallery(product)
 }
 
+const popularProductIds = [1, 21, 15, 2, 29, 10, 3, 9, 6, 31, 32, 27]
+
+const productPopularityScores = new Map(
+  popularProductIds.map((productId, index) => [productId, popularProductIds.length - index + 100]),
+)
+
+export function getProductPopularityScore(product: Product) {
+  return productPopularityScores.get(product.id) ?? Math.max(1, products.length - product.id)
+}
+
 export function getRelatedProducts(productId: number, limit = 4) {
   const currentProduct = findProductById(productId)
 

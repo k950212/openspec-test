@@ -401,8 +401,9 @@ function removeCoupon() {
 .quantity-control button {
   width: 2rem;
   height: 2rem;
+  border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: #fff;
+  background: var(--color-surface);
   color: var(--color-heading);
 }
 

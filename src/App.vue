@@ -7,26 +7,37 @@ import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 import { useProfileStore } from '@/stores/profile'
 import { useRecentlyViewedStore } from '@/stores/recentlyViewed'
+import { useUiStore } from '@/stores/ui'
 import { useWishlistStore } from '@/stores/wishlist'
 
 const router = useRouter()
 const cartStore = useCartStore()
 const authStore = useAuthStore()
 const profileStore = useProfileStore()
+const uiStore = useUiStore()
 const wishlistStore = useWishlistStore()
 const recentlyViewedStore = useRecentlyViewedStore()
 
 const { itemCount } = storeToRefs(cartStore)
 const { isAuthenticated } = storeToRefs(authStore)
 const { profile } = storeToRefs(profileStore)
+const { theme } = storeToRefs(uiStore)
 const { favoriteIds } = storeToRefs(wishlistStore)
 const { productIds } = storeToRefs(recentlyViewedStore)
 
 const authLabel = computed(() => (isAuthenticated.value ? profile.value.name : '未登入'))
+const themeLabel = computed(() => (theme.value === 'dark' ? 'Dark' : 'Light'))
+const themeToggleLabel = computed(() =>
+  theme.value === 'dark' ? 'Switch to light theme' : 'Switch to dark theme',
+)
 
 function handleLogout() {
   authStore.logout()
   void router.push('/')
+}
+
+function handleThemeToggle() {
+  uiStore.toggleTheme()
 }
 </script>
 
@@ -54,6 +65,15 @@ function handleLogout() {
       </nav>
 
       <div class="auth-actions">
+        <button
+          type="button"
+          class="theme-switcher"
+          :aria-label="themeToggleLabel"
+          @click="handleThemeToggle"
+        >
+          <span class="theme-switcher-label">Theme</span>
+          <span class="theme-switcher-value">{{ themeLabel }}</span>
+        </button>
         <RouterLink v-if="isAuthenticated" to="/profile" class="auth-status profile-entry">
           {{ authLabel }}
         </RouterLink>
@@ -140,6 +160,50 @@ function handleLogout() {
   gap: 0.65rem;
 }
 
+.theme-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.35rem;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.theme-switcher:hover {
+  border-color: var(--color-border-hover);
+  transform: translateY(-1px);
+}
+
+.theme-switcher-label {
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-soft);
+}
+
+.theme-switcher-value {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.5rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: rgba(15, 118, 110, 0.12);
+  color: var(--color-accent);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
 .auth-status {
   padding: 0.35rem 0.7rem;
   border-radius: 999px;
@@ -179,6 +243,10 @@ function handleLogout() {
 
   .auth-actions {
     flex-wrap: wrap;
+  }
+
+  .theme-switcher {
+    order: -1;
   }
 }
 </style>

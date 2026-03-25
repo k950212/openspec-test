@@ -1032,12 +1032,20 @@ function isImageFailed(imageUrl: string) {
 
 .variant-value {
   border: 1px solid var(--color-border);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--color-surface);
   color: var(--color-heading);
   padding: 0.7rem 0.95rem;
   border-radius: 999px;
   font-weight: 700;
   cursor: pointer;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.variant-value:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
 }
 
 .variant-value.selected {
